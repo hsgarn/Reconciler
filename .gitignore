@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+venv/
+.venv/
+env/
+.env/
+
+# Sensitive / personal data — never commit these
+prefs.json
+settings.json
+nicknames.json
+
+# Spreadsheet and CSV files (may contain financial data)
+*.ods
+*.csv
+*.xls
+*.xlsx
+
+# Backup files created by the app
+*_backup_*.ods
+
+# Temporary reconciler cache files
+reconciler_*.json
+
+# Claude Code files
+.claude/
+CLAUDE.md
+memory/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log

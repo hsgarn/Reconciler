@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}Settings — Bank Reconciler{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-9">
+
+    <div class="d-flex align-items-center mb-4">
+      <h2 class="mb-0"><i class="bi bi-gear me-2"></i>Settings</h2>
+      <a href="/" class="btn btn-outline-secondary btn-sm ms-auto">
+        <i class="bi bi-house me-1"></i> Home
+      </a>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+          {{ message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+      {% endfor %}
+    {% endwith %}
+
+    <form method="POST" action="/settings">
+
+      <!-- ── General ─────────────────────────────────────────────────── -->
+      <div class="card mb-4 shadow-sm">
+        <div class="card-header fw-semibold">General</div>
+        <div class="card-body">
+
+          <div class="mb-3">
+            <label class="form-label fw-medium">Spreadsheet Sheet Name</label>
+            {% if sheet_names %}
+              <select class="form-select" name="sheet_name">
+                {% for name in sheet_names %}
+                  <option value="{{ name }}" {% if name == s.sheet_name %}selected{% endif %}>{{ name }}</option>
+                {% endfor %}
+              </select>
+              <div class="form-text">
+                Detected sheets in the currently loaded spreadsheet.
+                If the workbook has only one sheet it is used automatically.
+              </div>
+            {% else %}
+              <input type="text" class="form-control" name="sheet_name"
+                     value="{{ s.sheet_name }}"
+                     placeholder="{{ defaults.sheet_name }}">
+              <div class="form-text">
+                Load a spreadsheet on the home page to see available sheet names here.
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label fw-medium">Date Match Window (days)</label>
+              <input type="number" class="form-control" name="date_window_days"
+                     value="{{ s.date_window_days }}" min="0" max="30">
+              <div class="form-text">
+                How many days either side of the bank date to search for a spreadsheet match.
+              </div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-medium">Out-of-Range View Window (days)</label>
+              <input type="number" class="form-control" name="oor_view_window_days"
+                     value="{{ s.oor_view_window_days }}" min="1" max="365">
+              <div class="form-text">
+                "View All" modal shows same-amount rows within this many days of the reconcile date.
+              </div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-medium">Reconcile Date Format</label>
+              <input type="text" class="form-control" name="date_format"
+                     value="{{ s.date_format }}"
+                     placeholder="{{ defaults.date_format }}">
+              <div class="form-text">
+                Python <code>strftime</code> format written into the spreadsheet
+                (e.g.&nbsp;<code>%m/%d/%y</code>).
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-3 col-md-4">
+            <label class="form-label fw-medium">Checkmark Character</label>
+            <input type="text" class="form-control" name="checkmark_char"
+                   value="{{ s.checkmark_char }}"
+                   placeholder="{{ defaults.checkmark_char }}" maxlength="4">
+            <div class="form-text">
+              Character placed in the Receipt column when a receipt is attached.
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ── Spreadsheet Column Mapping ──────────────────────────────── -->
+      <div class="card mb-4 shadow-sm">
+        <div class="card-header fw-semibold">Spreadsheet Column Mapping</div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            Enter the column letter (A, B, C…) for each field in your ODS spreadsheet.
+          </p>
+          <div class="row g-3">
+            {% set col_fields = [
+              ("col_date",            "Date",             false, ""),
+              ("col_check",           "Check #",          true,  "Optional — leave blank to disable"),
+              ("col_desc",            "Description",      false, ""),
+              ("col_receipt",         "Receipt",          true,  "Optional — leave blank to disable"),
+              ("col_amount",          "Amount",           false, ""),
+              ("col_balance",         "Balance",          false, ""),
+              ("col_reconciled",      "Reconciled Date",  false, ""),
+              ("col_reconciled_bal",  "Reconciled Bal.",  false, ""),
+              ("col_not_reconciled",  "Not Reconciled *", false, ""),
+            ] %}
+            {% for key, label, optional, note in col_fields %}
+            <div class="col-6 col-sm-4 col-md-3 col-lg-2">
+              <label class="form-label fw-medium">{{ label }}</label>
+              <input type="text" class="form-control text-uppercase text-center"
+                     name="{{ key }}"
+                     value="{{ col_letters[key] }}"
+                     maxlength="1" pattern="[A-Za-z]"
+                     style="font-size:1.1rem;letter-spacing:2px;"
+                     {% if optional %}placeholder="–"{% endif %}>
+              {% if note %}<div class="form-text">{{ note }}</div>{% endif %}
+            </div>
+            {% endfor %}
+            <div class="col-12 mt-1">
+              <p class="text-muted small mb-0">
+                <strong>* Not Reconciled</strong> — this column is read but not used in any calculation.
+                You can leave it configured or point it at an unused column without affecting reconciliation.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── CSV Column Headers ───────────────────────────────────────── -->
+      <div class="card mb-4 shadow-sm">
+        <div class="card-header fw-semibold">CSV Column Headers</div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            Enter the exact column header names as they appear in the bank CSV file.
+          </p>
+          <div class="row g-3">
+            {% set csv_fields = [
+              ("csv_date",        "Date"),
+              ("csv_description", "Description"),
+              ("csv_check",       "Check #"),
+              ("csv_debit",       "Debit"),
+              ("csv_credit",      "Credit"),
+            ] %}
+            {% for key, label in csv_fields %}
+            <div class="col-sm-6 col-md-4">
+              <label class="form-label fw-medium">{{ label }}</label>
+              <input type="text" class="form-control" name="{{ key }}"
+                     value="{{ s[key] }}"
+                     placeholder="{{ defaults[key] }}">
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Actions ─────────────────────────────────────────────────── -->
+      <div class="d-flex gap-2 mb-5">
+        <button type="submit" class="btn btn-primary px-4">
+          <i class="bi bi-check2-circle me-1"></i> Save Settings
+        </button>
+        <a href="/settings?reset=1" class="btn btn-outline-secondary"
+           onclick="return confirm('Reset all settings to defaults?')">
+          <i class="bi bi-arrow-counterclockwise me-1"></i> Reset to Defaults
+        </a>
+      </div>
+
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}Bank Reconciler – Nicknames{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+
+    <div class="d-flex align-items-center mb-4 gap-2">
+      <h2 class="fw-bold mb-0"><i class="bi bi-tags text-primary me-2"></i>Description Nicknames</h2>
+      <a href="{{ return_to }}" class="btn btn-outline-secondary btn-sm ms-auto">
+        <i class="bi bi-arrow-left me-1"></i> Back
+      </a>
+    </div>
+
+    <p class="text-muted">Map regex patterns to short nicknames. When a CSV description matches a pattern, the nickname is pre-filled in the description field on the review page.</p>
+
+    {# ── Add new ─────────────────────────────────────────────────────── #}
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-primary text-white fw-semibold">
+        <i class="bi bi-plus-circle me-1"></i> Add Nickname
+      </div>
+      <div class="card-body">
+        <form method="POST" action="/nicknames/add" id="addForm">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-5">
+              <label class="form-label small fw-semibold">Regex Pattern</label>
+              <input type="text" class="form-control form-control-sm font-monospace"
+                     name="pattern" id="addPattern" placeholder="e.g. JUICEPAYROLL|TJPC" required>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small fw-semibold">Nickname</label>
+              <input type="text" class="form-control form-control-sm"
+                     name="nickname" id="addNickname" placeholder="e.g. TJPC" required>
+            </div>
+            <div class="col-md-3">
+              <button type="submit" class="btn btn-primary btn-sm w-100">
+                <i class="bi bi-plus-lg me-1"></i> Add
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    {# ── Test field ──────────────────────────────────────────────────── #}
+    <div class="card shadow-sm mb-4 border-info">
+      <div class="card-header bg-info bg-opacity-10 fw-semibold text-info-emphasis">
+        <i class="bi bi-search me-1"></i> Test a Description
+      </div>
+      <div class="card-body">
+        <div class="input-group input-group-sm">
+          <input type="text" class="form-control font-monospace" id="testDesc"
+                 placeholder="Paste a CSV description here…">
+          <button class="btn btn-outline-info" type="button" id="testBtn">Test</button>
+        </div>
+        <div id="testResult" class="mt-2 small"></div>
+      </div>
+    </div>
+
+    {# ── Existing nicknames ──────────────────────────────────────────── #}
+    {% if nicknames %}
+    <div class="card shadow-sm">
+      <div class="card-header bg-light fw-semibold">
+        <i class="bi bi-list-ul me-1"></i> Saved Nicknames ({{ nicknames | length }})
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-sm table-bordered table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>Regex Pattern</th>
+              <th>Nickname</th>
+              <th width="120">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for n in nicknames %}
+            <tr id="row-{{ n.id }}">
+              <td class="font-monospace small">
+                <span class="view-mode-{{ n.id }}">{{ n.pattern }}</span>
+                <input type="text" class="form-control form-control-sm font-monospace edit-mode-{{ n.id }} d-none"
+                       value="{{ n.pattern }}" id="ep-{{ n.id }}">
+              </td>
+              <td>
+                <span class="view-mode-{{ n.id }}">{{ n.nickname }}</span>
+                <input type="text" class="form-control form-control-sm edit-mode-{{ n.id }} d-none"
+                       value="{{ n.nickname }}" id="en-{{ n.id }}">
+              </td>
+              <td class="text-center">
+                {# View mode buttons #}
+                <div class="view-mode-{{ n.id }} d-flex gap-1 justify-content-center">
+                  <button class="btn btn-outline-secondary btn-sm" onclick="startEdit({{ n.id }})">
+                    <i class="bi bi-pencil"></i>
+                  </button>
+                  <form method="POST" action="/nicknames/delete" class="d-inline"
+                        onsubmit="return confirm('Delete this nickname?')">
+                    <input type="hidden" name="id" value="{{ n.id }}">
+                    <button class="btn btn-outline-danger btn-sm" type="submit">
+                      <i class="bi bi-trash"></i>
+                    </button>
+                  </form>
+                </div>
+                {# Edit mode buttons #}
+                <div class="edit-mode-{{ n.id }} d-none d-flex gap-1 justify-content-center">
+                  <form method="POST" action="/nicknames/update" id="editForm-{{ n.id }}">
+                    <input type="hidden" name="id" value="{{ n.id }}">
+                    <input type="hidden" name="pattern"  id="ep-hidden-{{ n.id }}">
+                    <input type="hidden" name="nickname" id="en-hidden-{{ n.id }}">
+                    <button class="btn btn-success btn-sm" type="button" onclick="saveEdit({{ n.id }})">
+                      <i class="bi bi-check-lg"></i>
+                    </button>
+                  </form>
+                  <button class="btn btn-outline-secondary btn-sm" onclick="cancelEdit({{ n.id }})">
+                    <i class="bi bi-x-lg"></i>
+                  </button>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% else %}
+    <div class="alert alert-info">No nicknames saved yet. Add one above.</div>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function startEdit(id) {
+  document.querySelectorAll(`.view-mode-${id}`).forEach(el => el.classList.add('d-none'));
+  document.querySelectorAll(`.edit-mode-${id}`).forEach(el => el.classList.remove('d-none'));
+}
+function cancelEdit(id) {
+  document.querySelectorAll(`.view-mode-${id}`).forEach(el => el.classList.remove('d-none'));
+  document.querySelectorAll(`.edit-mode-${id}`).forEach(el => el.classList.add('d-none'));
+}
+function saveEdit(id) {
+  document.getElementById(`ep-hidden-${id}`).value = document.getElementById(`ep-${id}`).value;
+  document.getElementById(`en-hidden-${id}`).value = document.getElementById(`en-${id}`).value;
+  document.getElementById(`editForm-${id}`).submit();
+}
+
+document.getElementById('testBtn').addEventListener('click', function() {
+  const desc = document.getElementById('testDesc').value.trim();
+  const out  = document.getElementById('testResult');
+  if (!desc) { out.innerHTML = ''; return; }
+  fetch('/api/nicknames/match?desc=' + encodeURIComponent(desc))
+    .then(r => r.json())
+    .then(data => {
+      if (data.matches.length === 0) {
+        out.innerHTML = '<span class="text-muted">No matches.</span>';
+      } else {
+        out.innerHTML = data.matches.map(m =>
+          `<span class="badge bg-success me-1">${m.nickname}</span> <code class="text-muted small">${m.pattern}</code>`
+        ).join('<br>');
+      }
+    });
+});
+document.getElementById('testDesc').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') document.getElementById('testBtn').click();
+});
+</script>
+{% endblock %}

@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Bank Reconciler – Date Conflict{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-6 col-md-8">
+
+    <div class="text-center mb-4">
+      <div class="display-3 text-warning mb-2"><i class="bi bi-exclamation-triangle-fill"></i></div>
+      <h2 class="fw-bold">Reconcile Date Already Used</h2>
+    </div>
+
+    <div class="alert alert-warning shadow-sm">
+      <p class="mb-2">
+        <strong>{{ conflict_count }} transaction{{ 's' if conflict_count != 1 else '' }}</strong>
+        in the spreadsheet already have a reconciled date of <strong>{{ recon_date }}</strong>.
+      </p>
+      <p class="mb-2">
+        The CSV file contains <strong>{{ csv_count }} transaction{{ 's' if csv_count != 1 else '' }}</strong>.
+      </p>
+      <p class="mb-0 small text-muted">
+        If the counts match, you may have already reconciled this statement period and should start over.
+        If they differ, continuing may be appropriate.
+      </p>
+    </div>
+
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="card-title mb-3">What would you like to do?</h5>
+        <div class="d-grid gap-3">
+
+          <a href="/" class="btn btn-outline-secondary btn-lg">
+            <i class="bi bi-arrow-left-circle me-2"></i>Start Over
+          </a>
+
+          <form method="POST" action="/process">
+            <input type="hidden" name="force" value="1">
+            <input type="hidden" name="recon_date" value="{{ recon_date }}">
+            <input type="hidden" name="ending_bal" value="{{ ending_bal }}">
+            <button type="submit" class="btn btn-warning btn-lg w-100">
+              <i class="bi bi-arrow-right-circle me-2"></i>Continue Anyway
+            </button>
+          </form>
+
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

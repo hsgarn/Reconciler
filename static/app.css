@@ -1,0 +1,136 @@
+/* Bank Reconciler – custom styles */
+
+body {
+  font-size: 0.92rem;
+}
+
+/* Sticky confirm bar */
+#confirm-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 1030;
+  background: #1a1a2e;
+  color: #fff;
+  padding: 0.75rem 1.5rem;
+  box-shadow: 0 -2px 8px rgba(0,0,0,0.25);
+}
+
+/* Status badges */
+.badge-auto   { background-color: #198754; }
+.badge-multi  { background-color: #0d6efd; }
+.badge-oor    { background-color: #ffc107; color: #000; }
+.badge-miss   { background-color: #dc3545; }
+
+/* Card hover lift */
+.card.needs-action {
+  border-left: 4px solid #0d6efd;
+  transition: box-shadow 0.15s;
+}
+.card.needs-action:hover {
+  box-shadow: 0 4px 16px rgba(13,110,253,0.18);
+}
+.card.oor-action {
+  border-left: 4px solid #ffc107;
+}
+.card.oor-action:hover {
+  box-shadow: 0 4px 16px rgba(255,193,7,0.25);
+}
+.card.missing-action {
+  border-left: 4px solid #dc3545;
+}
+.card.missing-action:hover {
+  box-shadow: 0 4px 16px rgba(220,53,69,0.18);
+}
+
+/* Bank tx header row */
+.bank-tx-header {
+  background: #f0f4ff;
+  border-radius: 6px;
+  padding: 0.6rem 1rem;
+  margin-bottom: 0.75rem;
+}
+
+/* Amount display */
+.amount-positive { color: #198754; font-weight: 600; }
+.amount-negative { color: #dc3545; font-weight: 600; }
+
+/* Candidate table radio rows */
+.candidate-row:hover {
+  background: #f0f8ff;
+  cursor: pointer;
+}
+.candidate-row input[type=radio]:checked ~ td {
+  font-weight: 600;
+}
+
+/* Selected radio row highlight */
+.table-radio-selected {
+  background: #d1ecf1 !important;
+}
+
+/* Section headers */
+.section-header {
+  border-bottom: 2px solid #dee2e6;
+  padding-bottom: 0.5rem;
+  margin-bottom: 1.25rem;
+  margin-top: 2rem;
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: #343a40;
+}
+
+/* Balance check card */
+.balance-card {
+  font-size: 1rem;
+}
+.balance-card .bal-label {
+  color: #6c757d;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.balance-card .bal-value {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+/* Collapsed auto table toggle */
+.auto-toggle {
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Receipt toggle row */
+.receipt-row {
+  display: none;
+  margin-top: 0.5rem;
+}
+.receipt-row.visible {
+  display: block;
+}
+
+/* Progress bar in confirm bar */
+#progress-text {
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
+/* More visible radio buttons */
+input[type="radio"] {
+  width: 1.15em;
+  height: 1.15em;
+  border: 2px solid #6c757d;
+  accent-color: #0d6efd;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+input[type="radio"]:checked {
+  border-color: #0d6efd;
+  accent-color: #0d6efd;
+}
+.form-check-input[type="radio"] {
+  width: 1.15em;
+  height: 1.15em;
+  border: 2px solid #6c757d;
+  margin-top: 0.2em;
+}

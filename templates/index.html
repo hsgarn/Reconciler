@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block title %}Bank Reconciler – Upload{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-6 col-md-8">
+
+    <div class="text-center mb-4">
+      <h2 class="fw-bold"><i class="bi bi-file-earmark-spreadsheet text-primary me-2"></i>Start Reconciliation</h2>
+      <p class="text-muted">Select your spreadsheet and upload the bank CSV to begin.</p>
+    </div>
+
+    {% if error %}
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+      <i class="bi bi-exclamation-triangle-fill me-2"></i>{{ error }}
+      <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endif %}
+
+    <div class="card shadow-sm">
+      <div class="card-header bg-primary text-white fw-semibold">
+        <i class="bi bi-upload me-1"></i> Files
+      </div>
+      <div class="card-body">
+        <form method="POST" action="/process">
+
+          <!-- ODS Path -->
+          <div class="mb-3">
+            <label for="ods_path" class="form-label fw-semibold">
+              ODS Spreadsheet <span class="text-danger">*</span>
+            </label>
+            <div class="input-group">
+              <input type="text" class="form-control" id="ods_path" name="ods_path"
+                     placeholder="Click Browse… to select file" required
+                     value="{{ last_ods_path or '' }}" readonly>
+              <button type="button" class="btn btn-outline-secondary browse-btn" data-type="ods" data-target="ods_path">
+                <i class="bi bi-folder2-open me-1"></i> Browse…
+              </button>
+            </div>
+          </div>
+
+          <!-- CSV Path -->
+          <div class="mb-3">
+            <label for="csv_path" class="form-label fw-semibold">
+              Bank Transaction CSV <span class="text-danger">*</span>
+            </label>
+            <div class="input-group">
+              <input type="text" class="form-control" id="csv_path" name="csv_path"
+                     placeholder="Click Browse… to select file" required
+                     value="{{ last_csv_path or '' }}" readonly>
+              <button type="button" class="btn btn-outline-secondary browse-btn" data-type="csv" data-target="csv_path">
+                <i class="bi bi-folder2-open me-1"></i> Browse…
+              </button>
+            </div>
+            <div class="form-text">Expected filename pattern: <code>Transactions-YYYY-MM-DD.csv</code></div>
+          </div>
+
+          <!-- Reconcile Date -->
+          <div class="mb-3">
+            <label for="recon_date" class="form-label fw-semibold">Reconcile Date</label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="bi bi-calendar3"></i></span>
+              <input type="text" class="form-control" id="recon_date" name="recon_date"
+                     placeholder="MM/DD/YY" pattern="\d{2}/\d{2}/\d{2}"
+                     value="{{ last_recon_date or '' }}">
+            </div>
+            <div class="form-text">Auto-filled from CSV filename. Format: MM/DD/YY</div>
+          </div>
+
+          <!-- Ending Balance -->
+          <div class="mb-3">
+            <label for="ending_bal" class="form-label fw-semibold">Ending Reconciled Balance</label>
+            <div class="input-group">
+              <span class="input-group-text">$</span>
+              <input type="text" class="form-control" id="ending_bal" name="ending_bal"
+                     placeholder="0.00" value="{{ last_ending_bal or '' }}">
+            </div>
+            <div class="form-text">From your bank statement.</div>
+          </div>
+
+          <!-- Save Mode -->
+          <div class="mb-4">
+            <label class="form-label fw-semibold">After Reconciling</label>
+            <div class="d-flex gap-3">
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="save_mode" id="save_overwrite"
+                       value="overwrite" checked>
+                <label class="form-check-label" for="save_overwrite">
+                  <i class="bi bi-arrow-counterclockwise me-1"></i> Overwrite original file
+                </label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="save_mode" id="save_download"
+                       value="download">
+                <label class="form-check-label" for="save_download">
+                  <i class="bi bi-download me-1"></i> Download updated file
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="d-grid">
+            <button type="submit" class="btn btn-primary btn-lg">
+              <i class="bi bi-arrow-right-circle me-1"></i> Process & Review
+            </button>
+          </div>
+
+        </form>
+      </div>
+    </div>
+
+    <!-- Info card -->
+    <div class="card mt-3 border-0 bg-white shadow-sm">
+      <div class="card-body small text-muted">
+        <div class="row g-2 text-center">
+          <div class="col-4">
+            <div class="fw-semibold text-success"><i class="bi bi-check-circle-fill"></i> Auto</div>
+            Single match found, reconciled automatically
+          </div>
+          <div class="col-4">
+            <div class="fw-semibold text-primary"><i class="bi bi-list-ul"></i> Multi</div>
+            Multiple candidates — you choose
+          </div>
+          <div class="col-4">
+            <div class="fw-semibold text-danger"><i class="bi bi-question-circle-fill"></i> Missing</div>
+            No match — add or skip
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── localStorage persistence ────────────────────────────────────────────
+const LS_KEYS = ['ods_path', 'csv_path', 'recon_date', 'ending_bal'];
+
+function lsSave(id) {
+  const el = document.getElementById(id);
+  if (el) localStorage.setItem('reconciler_' + id, el.value);
+}
+function lsRestore(id) {
+  const el = document.getElementById(id);
+  if (el && !el.value) {
+    const saved = localStorage.getItem('reconciler_' + id);
+    if (saved) el.value = saved;
+  }
+}
+
+// Restore on page load (server value takes priority — only fills if empty)
+LS_KEYS.forEach(lsRestore);
+
+// Save on change
+['recon_date', 'ending_bal'].forEach(function(id) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', function() { lsSave(id); });
+});
+
+// ── Browse buttons ──────────────────────────────────────────────────────
+document.querySelectorAll('.browse-btn').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    const type = this.dataset.type;
+    const targetId = this.dataset.target;
+    this.disabled = true;
+    this.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Opening…';
+    fetch('/browse?type=' + type)
+      .then(r => r.json())
+      .then(data => {
+        if (data.path) {
+          document.getElementById(targetId).value = data.path;
+          lsSave(targetId);
+          if (type === 'csv') {
+            const match = data.path.match(/(\d{4})-(\d{2})-(\d{2})/);
+            if (match && !document.getElementById('recon_date').value) {
+              const year = match[1].slice(2);
+              document.getElementById('recon_date').value = match[2] + '/' + match[3] + '/' + year;
+              lsSave('recon_date');
+            }
+          }
+        }
+      })
+      .finally(() => {
+        this.disabled = false;
+        this.innerHTML = '<i class="bi bi-folder2-open me-1"></i> Browse…';
+      });
+  });
+});
+</script>
+{% endblock %}

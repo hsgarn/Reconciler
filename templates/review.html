@@ -1,0 +1,952 @@
+{% extends "base.html" %}
+{% block title %}Bank Reconciler – Review{% endblock %}
+
+{% block content %}
+
+{# ── Count sections ── #}
+{% set auto_results    = results | selectattr("status", "equalto", "auto")          | list %}
+{% set multi_results   = results | selectattr("status", "equalto", "multi")         | list %}
+{% set oor_results     = results | selectattr("status", "equalto", "out_of_range")  | list %}
+{% set missing_results = results | selectattr("status", "equalto", "missing")       | list %}
+{% set needs_choice    = multi_results | length + oor_results | length %}
+{% if oor_all_matches is not defined %}{% set oor_all_matches = {} %}{% endif %}
+{% if nickname_matches is not defined %}{% set nickname_matches = {} %}{% endif %}
+
+{# ── Macro: nickname-aware description field ── #}
+{% macro desc_field(field_name, bank_tx, gi_suffix) %}
+{% set nmatches = nickname_matches.get(bank_tx.description, []) %}
+<div>
+  <label class="form-label small mb-1">Description</label>
+  <div class="input-group input-group-sm">
+    <select class="form-select form-select-sm" name="{{ field_name }}" id="desc-sel-{{ gi_suffix }}">
+      {% for m in nmatches %}
+      <option value="{{ m.nickname }}"{% if loop.first %} selected{% endif %}>{{ m.nickname }} (nickname)</option>
+      {% endfor %}
+      <option value="{{ bank_tx.description }}"{% if not nmatches %} selected{% endif %}>{{ bank_tx.description }} (CSV)</option>
+    </select>
+    <button type="button" class="btn btn-outline-secondary nm-tag-btn" title="Add nickname"
+            data-gi="{{ gi_suffix }}" data-csv="{{ bank_tx.description }}">
+      <i class="bi bi-tag-fill"></i>
+    </button>
+  </div>
+</div>
+{% endmacro %}
+
+<div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+  <h2 class="fw-bold mb-0"><i class="bi bi-eye text-primary me-2"></i>Review Matches</h2>
+  <div class="d-flex gap-2 flex-wrap align-items-center">
+    <span class="badge bg-success fs-6"><i class="bi bi-check2"></i> {{ auto_results | length }} auto</span>
+    <span class="badge bg-primary fs-6"><i class="bi bi-list-ul"></i> {{ multi_results | length }} multi</span>
+    <span class="badge bg-warning text-dark fs-6"><i class="bi bi-exclamation-triangle"></i> {{ oor_results | length }} out-of-range</span>
+    <span class="badge bg-danger fs-6"><i class="bi bi-question-circle"></i> {{ missing_results | length }} missing</span>
+    <a href="/" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-arrow-left-circle me-1"></i> Start Over
+    </a>
+  </div>
+</div>
+
+<form method="POST" action="/confirm" id="review-form">
+
+{# ═══════════════════════════════════════════════════════════
+   1. BALANCE CHECK CARD
+═══════════════════════════════════════════════════════════ #}
+<div class="section-header"><i class="bi bi-calculator me-1"></i> Balance Check</div>
+<div class="card balance-card shadow-sm mb-4 {% if balance_info.match %}border-success{% else %}border-danger{% endif %}">
+  <div class="card-header {% if balance_info.match %}bg-success text-white{% else %}bg-danger text-white{% endif %} fw-semibold">
+    {% if balance_info.match %}
+      <i class="bi bi-check-circle-fill me-1"></i> Balance matches — looking good!
+    {% else %}
+      <i class="bi bi-x-circle-fill me-1"></i> Balance mismatch — review your transactions
+    {% endif %}
+  </div>
+  <div class="card-body">
+    <div class="row text-center g-3">
+      <div class="col-md-4">
+        <div class="bal-label">Last Reconciled Balance</div>
+        <div class="bal-value">
+          {% if balance_info.last_recon_bal %} ${{ balance_info.last_recon_bal }}
+          {% else %}<span class="text-muted">N/A</span>{% endif %}
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="bal-label">Computed Ending Balance <small class="text-muted">(all CSV transactions)</small></div>
+        <div class="bal-value {% if balance_info.match %}text-success{% else %}text-danger{% endif %}">
+          {% if balance_info.computed_bal %} ${{ balance_info.computed_bal }}
+          {% else %}<span class="text-muted">N/A</span>{% endif %}
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="bal-label">Entered Ending Balance</div>
+        <div class="bal-value">
+          {% if balance_info.ending_bal %} ${{ balance_info.ending_bal }}
+          {% else %}<span class="text-muted">N/A</span>{% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+{# ═══════════════════════════════════════════════════════════
+   2. AUTO-MATCHES  (editable sheet fields inline)
+═══════════════════════════════════════════════════════════ #}
+{% if auto_results %}
+<div class="section-header">
+  <i class="bi bi-check-circle text-success me-1"></i> Auto-Matched
+  <span class="text-muted fw-normal fs-6 ms-2">({{ auto_results | length }} transactions — expand to review/edit)</span>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center auto-toggle cursor-pointer"
+       data-bs-toggle="collapse" data-bs-target="#auto-collapse" aria-expanded="false">
+    <span class="fw-semibold text-success">
+      <i class="bi bi-check2-circle me-1"></i> {{ auto_results | length }} transactions auto-matched
+    </span>
+    <i class="bi bi-chevron-down"></i>
+  </div>
+  <div class="collapse" id="auto-collapse">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>Bank Date</th>
+            <th>Bank Amount</th>
+            <th>Bank Description</th>
+            <th class="text-center" style="width:30px"></th>
+            <th>Sheet Date</th>
+            <th>Sheet Description</th>
+            {% if has_check %}<th>Check #</th>{% endif %}
+            {% if has_receipt %}<th class="text-center">Receipt</th>{% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in auto_results %}
+          {% set gi = results.index(r) %}
+          <tr>
+            <td class="text-nowrap">{{ r.bank_tx.date.strftime('%m/%d/%y') }}</td>
+            <td class="text-nowrap {% if r.bank_tx.amount < 0 %}amount-negative{% else %}amount-positive{% endif %}">
+              ${{ '%.2f' | format(r.bank_tx.amount | float | abs) }}
+            </td>
+            <td>{{ r.bank_tx.description }}</td>
+            <td class="text-center"><span class="badge bg-success"><i class="bi bi-arrow-right"></i></span></td>
+            <td>
+              <input type="text" class="form-control form-control-sm" style="min-width:90px"
+                     name="edit_{{ gi }}_date" value="{{ r.matched_row.date.strftime('%m/%d/%y') }}">
+            </td>
+            <td>
+              <input type="text" class="form-control form-control-sm" style="min-width:160px"
+                     name="edit_{{ gi }}_desc" value="{{ r.matched_row.description }}">
+            </td>
+            {% if has_check %}
+            <td>
+              <input type="text" class="form-control form-control-sm" style="min-width:70px"
+                     name="edit_{{ gi }}_check" value="{{ r.matched_row.check_number }}">
+            </td>
+            {% endif %}
+            {% if has_receipt %}
+            <td class="text-center">
+              <input class="form-check-input" type="checkbox"
+                     name="edit_{{ gi }}_receipt" id="edit_{{ gi }}_receipt"
+                     {% if r.matched_row.receipt %}checked{% endif %}>
+            </td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+
+{# ═══════════════════════════════════════════════════════════
+   3. MULTI-MATCH
+═══════════════════════════════════════════════════════════ #}
+{% if multi_results %}
+<div class="section-header">
+  <i class="bi bi-list-ul text-primary me-1"></i> Multiple Matches
+  <span class="text-muted fw-normal fs-6 ms-2">(choose one candidate per transaction)</span>
+</div>
+
+{% for r in multi_results %}
+{% set gi = results.index(r) %}
+<div class="card needs-action shadow-sm mb-3" id="card-multi-{{ gi }}">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span class="fw-semibold">
+      <span class="badge bg-primary me-1">Multi #{{ loop.index }}</span>
+      {{ r.bank_tx.date.strftime('%m/%d/%y') }} &mdash;
+      <span class="{% if r.bank_tx.amount < 0 %}text-danger{% else %}text-success{% endif %} fw-bold">
+        ${{ '%.2f' | format(r.bank_tx.amount | float | abs) }}
+      </span>
+    </span>
+    <span class="text-muted small">{{ r.bank_tx.description }}{% if r.bank_tx.check_number %} &nbsp;·&nbsp; check #{{ r.bank_tx.check_number }}{% endif %}</span>
+  </div>
+  <div class="card-body">
+    <p class="small text-muted mb-2">Select the correct sheet entry:</p>
+    <div class="table-responsive">
+      <table class="table table-sm table-bordered align-middle mb-2">
+        <thead class="table-light">
+          <tr>
+            <th width="40">Pick</th>
+            <th>Sheet Date</th>
+            <th>Amount</th>
+            <th>Description</th>
+            {% if has_check %}<th>Check #</th>{% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in r.candidates %}
+          <tr class="candidate-row"
+              data-date="{{ c.date.strftime('%m/%d/%y') }}"
+              data-desc="{{ c.description }}"
+              data-check="{{ c.check_number }}"
+              data-receipt="{{ 'true' if c.receipt else 'false' }}"
+              onclick="selectRadio('choice_{{ gi }}_{{ c.row_index }}', {{ gi }})">
+            <td class="text-center">
+              <input class="form-check-input choice-radio" type="radio"
+                     name="choice_{{ gi }}" id="choice_{{ gi }}_{{ c.row_index }}"
+                     value="{{ c.row_index }}" data-card="{{ gi }}"
+                     onchange="onChoiceChange({{ gi }})">
+            </td>
+            <td>{{ c.date.strftime('%m/%d/%y') }}</td>
+            <td class="{% if c.amount < 0 %}text-danger{% else %}text-success{% endif %}">
+              ${{ '%.2f' | format(c.amount | float | abs) }}
+            </td>
+            <td>{{ c.description }}</td>
+            {% if has_check %}<td>{{ c.check_number }}</td>{% endif %}
+          </tr>
+          {% endfor %}
+          <tr class="candidate-row" onclick="selectRadio('choice_{{ gi }}_skip', {{ gi }})">
+            <td class="text-center">
+              <input class="form-check-input choice-radio" type="radio"
+                     name="choice_{{ gi }}" id="choice_{{ gi }}_skip"
+                     value="skip" data-card="{{ gi }}"
+                     onchange="onChoiceChange({{ gi }})">
+            </td>
+            <td colspan="4" class="text-muted fst-italic">Skip — move to missing list</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    {# Edit panel — revealed when a non-skip candidate is selected #}
+    <div class="edit-panel border rounded p-3 bg-light d-none" id="edit-panel-{{ gi }}">
+      <div class="small fw-semibold text-muted mb-2"><i class="bi bi-pencil me-1"></i>Edit selected sheet entry</div>
+      <div class="row g-2 align-items-end">
+        <div class="col-sm-2">
+          <label class="form-label small mb-1">Date</label>
+          <input type="text" class="form-control form-control-sm" name="edit_{{ gi }}_date" id="edit_{{ gi }}_date">
+        </div>
+        <div class="col-sm-4">
+          <label class="form-label small mb-1">Description</label>
+          <input type="text" class="form-control form-control-sm" name="edit_{{ gi }}_desc" id="edit_{{ gi }}_desc">
+        </div>
+        <div class="col-sm-2">
+          <label class="form-label small mb-1">Check #</label>
+          <input type="text" class="form-control form-control-sm" name="edit_{{ gi }}_check" id="edit_{{ gi }}_check"
+                 {% if not has_check %}disabled placeholder="not configured"{% endif %}>
+        </div>
+        <div class="col-sm-2 d-flex align-items-end pb-1">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox"
+                   name="edit_{{ gi }}_receipt" id="edit_{{ gi }}_receipt"
+                   {% if not has_receipt %}disabled{% endif %}>
+            <label class="form-check-label small {% if not has_receipt %}text-muted{% endif %}" for="edit_{{ gi }}_receipt">Receipt</label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# Skip panel — revealed when Skip is chosen #}
+    <div class="skip-missing-panel border rounded p-3 mt-2 bg-warning bg-opacity-10 d-none" id="skip-panel-{{ gi }}">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="small fw-semibold"><i class="bi bi-arrow-down-circle me-1"></i>Add this transaction to the spreadsheet?</span>
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="undoSkip({{ gi }})">
+          <i class="bi bi-arrow-counterclockwise me-1"></i>Undo Skip
+        </button>
+      </div>
+      <div class="d-flex gap-3 align-items-center mb-2">
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="missing_{{ gi }}"
+                 id="skip_miss_skip_{{ gi }}" value="skip" checked>
+          <label class="form-check-label small" for="skip_miss_skip_{{ gi }}"><span class="badge bg-secondary">Skip</span></label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="missing_{{ gi }}"
+                 id="skip_miss_add_{{ gi }}" value="add">
+          <label class="form-check-label small" for="skip_miss_add_{{ gi }}"><span class="badge bg-success">Add to spreadsheet</span></label>
+        </div>
+      </div>
+      <div class="row g-2 align-items-end">
+        <div class="col-sm-2">
+          <label class="form-label small mb-1">Date</label>
+          <input type="text" class="form-control form-control-sm"
+                 name="missing_edit_{{ gi }}_date" value="{{ r.bank_tx.date.strftime('%m/%d/%y') }}">
+        </div>
+        <div class="col-sm-4">
+          {{ desc_field('missing_edit_' ~ gi ~ '_desc', r.bank_tx, 'oor-skip-' ~ gi) }}
+        </div>
+        <div class="col-sm-2">
+          <label class="form-label small mb-1">Check #</label>
+          <input type="text" class="form-control form-control-sm"
+                 name="missing_edit_{{ gi }}_check" value="{{ r.bank_tx.check_number }}"
+                 {% if not has_check %}disabled placeholder="not configured"{% endif %}>
+        </div>
+        <div class="col-sm-2 d-flex align-items-end pb-1">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="receipt_{{ gi }}" id="skip_receipt_{{ gi }}"
+                   {% if not has_receipt %}disabled{% endif %}>
+            <label class="form-check-label small {% if not has_receipt %}text-muted{% endif %}" for="skip_receipt_{{ gi }}">Receipt</label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="text-danger small d-none mt-1" id="warn-{{ gi }}">
+      <i class="bi bi-exclamation-circle me-1"></i>Please make a selection.
+    </div>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+
+
+{# ═══════════════════════════════════════════════════════════
+   4. OUT-OF-RANGE
+═══════════════════════════════════════════════════════════ #}
+{% if oor_results %}
+<div class="section-header">
+  <i class="bi bi-exclamation-triangle text-warning me-1"></i> Date Out of Range
+  <span class="text-muted fw-normal fs-6 ms-2">(candidates outside the ±3 day window)</span>
+</div>
+
+{% for r in oor_results %}
+{% set gi = results.index(r) %}
+<div class="card oor-action shadow-sm mb-3" id="card-oor-{{ gi }}">
+  <div class="card-header bg-warning bg-opacity-25 d-flex justify-content-between align-items-center">
+    <span class="fw-semibold">
+      <span class="badge bg-warning text-dark me-1">Out-of-Range #{{ loop.index }}</span>
+      {{ r.bank_tx.date.strftime('%m/%d/%y') }} &mdash;
+      <span class="{% if r.bank_tx.amount < 0 %}text-danger{% else %}text-success{% endif %} fw-bold">
+        ${{ '%.2f' | format(r.bank_tx.amount | float | abs) }}
+      </span>
+    </span>
+    <span class="text-muted small">{{ r.bank_tx.description }}{% if r.bank_tx.check_number %} &nbsp;·&nbsp; check #{{ r.bank_tx.check_number }}{% endif %}</span>
+  </div>
+  <div class="card-body">
+    <div class="alert alert-warning py-2 small mb-3 d-flex align-items-center justify-content-between">
+      <span>
+        <i class="bi bi-clock-history me-1"></i>
+        <strong>Date mismatch:</strong> Candidates found outside the normal 3-day window.
+      </span>
+      {% if gi in oor_all_matches %}
+      <button type="button" class="btn btn-outline-secondary btn-sm ms-2" data-bs-toggle="modal" data-bs-target="#oorAllModal-{{ gi }}">
+        <i class="bi bi-search me-1"></i> View All ({{ oor_all_matches[gi] | length }})
+      </button>
+      {% endif %}
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm table-bordered align-middle mb-2">
+        <thead class="table-light">
+          <tr>
+            <th width="40">Pick</th>
+            <th>Sheet Date</th>
+            <th>Date Diff</th>
+            <th>Amount</th>
+            <th>Description</th>
+            {% if has_check %}<th>Check #</th>{% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in r.out_of_range_candidates %}
+          {% set diff_days = ((r.bank_tx.date - c.date).days) | abs %}
+          <tr class="candidate-row"
+              data-date="{{ c.date.strftime('%m/%d/%y') }}"
+              data-desc="{{ c.description }}"
+              data-check="{{ c.check_number }}"
+              data-receipt="{{ 'true' if c.receipt else 'false' }}"
+              onclick="selectRadio('choice_{{ gi }}_{{ c.row_index }}', {{ gi }})">
+            <td class="text-center">
+              <input class="form-check-input choice-radio" type="radio"
+                     name="choice_{{ gi }}" id="choice_{{ gi }}_{{ c.row_index }}"
+                     value="{{ c.row_index }}" data-card="{{ gi }}"
+                     onchange="onChoiceChange({{ gi }})">
+            </td>
+            <td>{{ c.date.strftime('%m/%d/%y') }}</td>
+            <td><span class="badge bg-warning text-dark">{{ diff_days }}d off</span></td>
+            <td class="{% if c.amount < 0 %}text-danger{% else %}text-success{% endif %}">
+              ${{ '%.2f' | format(c.amount | float | abs) }}
+            </td>
+            <td>{{ c.description }}</td>
+            {% if has_check %}<td>{{ c.check_number }}</td>{% endif %}
+          </tr>
+          {% endfor %}
+          <tr class="candidate-row" onclick="selectRadio('choice_{{ gi }}_skip', {{ gi }})">
+            <td class="text-center">
+              <input class="form-check-input choice-radio" type="radio"
+                     name="choice_{{ gi }}" id="choice_{{ gi }}_skip"
+                     value="skip" data-card="{{ gi }}"
+                     onchange="onChoiceChange({{ gi }})">
+            </td>
+            <td colspan="5" class="text-muted fst-italic">Skip — move to missing list</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    {# Edit panel #}
+    <div class="edit-panel border rounded p-3 bg-light d-none" id="edit-panel-{{ gi }}">
+      <div class="small fw-semibold text-muted mb-2"><i class="bi bi-pencil me-1"></i>Edit selected sheet entry</div>
+      <div class="row g-2 align-items-end">
+        <div class="col-sm-2">
+          <label class="form-label small mb-1">Date</label>
+          <input type="text" class="form-control form-control-sm" name="edit_{{ gi }}_date" id="edit_{{ gi }}_date">
+        </div>
+        <div class="col-sm-4">
+          <label class="form-label small mb-1">Description</label>
+          <input type="text" class="form-control form-control-sm" name="edit_{{ gi }}_desc" id="edit_{{ gi }}_desc">
+        </div>
+        <div class="col-sm-2">
+          <label class="form-label small mb-1">Check #</label>
+          <input type="text" class="form-control form-control-sm" name="edit_{{ gi }}_check" id="edit_{{ gi }}_check"
+                 {% if not has_check %}disabled placeholder="not configured"{% endif %}>
+        </div>
+        <div class="col-sm-2 d-flex align-items-end pb-1">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox"
+                   name="edit_{{ gi }}_receipt" id="edit_{{ gi }}_receipt"
+                   {% if not has_receipt %}disabled{% endif %}>
+            <label class="form-check-label small {% if not has_receipt %}text-muted{% endif %}" for="edit_{{ gi }}_receipt">Receipt</label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# Skip panel — revealed when Skip is chosen #}
+    <div class="skip-missing-panel border rounded p-3 mt-2 bg-warning bg-opacity-10 d-none" id="skip-panel-{{ gi }}">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="small fw-semibold"><i class="bi bi-arrow-down-circle me-1"></i>Add this transaction to the spreadsheet?</span>
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="undoSkip({{ gi }})">
+          <i class="bi bi-arrow-counterclockwise me-1"></i>Undo Skip
+        </button>
+      </div>
+      <div class="d-flex gap-3 align-items-center mb-2">
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="missing_{{ gi }}"
+                 id="skip_miss_skip_{{ gi }}" value="skip" checked>
+          <label class="form-check-label small" for="skip_miss_skip_{{ gi }}"><span class="badge bg-secondary">Skip</span></label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="missing_{{ gi }}"
+                 id="skip_miss_add_{{ gi }}" value="add">
+          <label class="form-check-label small" for="skip_miss_add_{{ gi }}"><span class="badge bg-success">Add to spreadsheet</span></label>
+        </div>
+      </div>
+      <div class="row g-2 align-items-end">
+        <div class="col-sm-2">
+          <label class="form-label small mb-1">Date</label>
+          <input type="text" class="form-control form-control-sm"
+                 name="missing_edit_{{ gi }}_date" value="{{ r.bank_tx.date.strftime('%m/%d/%y') }}">
+        </div>
+        <div class="col-sm-4">
+          {{ desc_field('missing_edit_' ~ gi ~ '_desc', r.bank_tx, 'oor-skip-' ~ gi) }}
+        </div>
+        <div class="col-sm-2">
+          <label class="form-label small mb-1">Check #</label>
+          <input type="text" class="form-control form-control-sm"
+                 name="missing_edit_{{ gi }}_check" value="{{ r.bank_tx.check_number }}"
+                 {% if not has_check %}disabled placeholder="not configured"{% endif %}>
+        </div>
+        <div class="col-sm-2 d-flex align-items-end pb-1">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="receipt_{{ gi }}" id="skip_receipt_{{ gi }}"
+                   {% if not has_receipt %}disabled{% endif %}>
+            <label class="form-check-label small {% if not has_receipt %}text-muted{% endif %}" for="skip_receipt_{{ gi }}">Receipt</label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="text-danger small d-none mt-1" id="warn-{{ gi }}">
+      <i class="bi bi-exclamation-circle me-1"></i>Please make a selection.
+    </div>
+  </div>
+</div>
+{% if gi in oor_all_matches %}
+<div class="modal fade" id="oorAllModal-{{ gi }}" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header bg-warning bg-opacity-25">
+        <h5 class="modal-title">
+          <i class="bi bi-search me-1"></i>
+          All ${{ '%.2f' | format(r.bank_tx.amount | float | abs) }} transactions
+          <span class="text-muted fw-normal fs-6">(within 2 months of reconcile date)</span>
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <table class="table table-sm table-bordered table-striped mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Date</th>
+              <th>Description</th>
+              {% if has_check %}<th>Check #</th>{% endif %}
+              <th>Amount</th>
+              <th>Reconciled</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for m in oor_all_matches[gi] %}
+            <tr{% if m.reconciled_date %} class="text-muted"{% endif %}>
+              <td>{{ m.date }}</td>
+              <td>{{ m.description }}</td>
+              {% if has_check %}<td>{{ m.check_number }}</td>{% endif %}
+              <td>{{ m.amount }}</td>
+              <td>{{ m.reconciled_date if m.reconciled_date else '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endfor %}
+{% endif %}
+
+
+{# ═══════════════════════════════════════════════════════════
+   5. MISSING TRANSACTIONS
+═══════════════════════════════════════════════════════════ #}
+{% if missing_results %}
+<div class="section-header">
+  <i class="bi bi-question-circle text-danger me-1"></i> Missing Transactions
+  <span class="text-muted fw-normal fs-6 ms-2">(no match found in spreadsheet)</span>
+</div>
+
+{% for r in missing_results %}
+{% set gi = results.index(r) %}
+<div class="card missing-action shadow-sm mb-3">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span class="fw-semibold">
+      <span class="badge bg-danger me-1">Missing #{{ loop.index }}</span>
+      {{ r.bank_tx.date.strftime('%m/%d/%y') }} &mdash;
+      <span class="{% if r.bank_tx.amount < 0 %}text-danger{% else %}text-success{% endif %} fw-bold">
+        ${{ '%.2f' | format(r.bank_tx.amount | float | abs) }}
+      </span>
+    </span>
+    <span class="text-muted small">{{ r.bank_tx.description }}{% if r.bank_tx.check_number %} &nbsp;·&nbsp; check #{{ r.bank_tx.check_number }}{% endif %}</span>
+  </div>
+  <div class="card-body">
+    <div class="d-flex gap-3 align-items-center flex-wrap mb-2">
+      <div class="form-check">
+        <input class="form-check-input" type="radio"
+               name="missing_{{ gi }}" id="miss_skip_{{ gi }}" value="skip"
+               onchange="toggleMissingAdd({{ gi }}, false)">
+        <label class="form-check-label" for="miss_skip_{{ gi }}">
+          <span class="badge bg-secondary">Skip</span>
+        </label>
+      </div>
+      <div class="form-check">
+        <input class="form-check-input" type="radio"
+               name="missing_{{ gi }}" id="miss_add_{{ gi }}" value="add"
+               checked onchange="toggleMissingAdd({{ gi }}, true)">
+        <label class="form-check-label" for="miss_add_{{ gi }}">
+          <span class="badge bg-success">Add to spreadsheet</span>
+        </label>
+      </div>
+    </div>
+
+    {# Add panel — editable fields + receipt, revealed when Add selected #}
+    <div class="edit-panel border rounded p-3 bg-light" id="miss-panel-{{ gi }}">
+      <div class="small fw-semibold text-muted mb-2"><i class="bi bi-pencil me-1"></i>Entry to insert (edit if needed)</div>
+      <div class="row g-2 align-items-end">
+        <div class="col-sm-2">
+          <label class="form-label small mb-1">Date</label>
+          <input type="text" class="form-control form-control-sm"
+                 name="edit_{{ gi }}_date" value="{{ r.bank_tx.date.strftime('%m/%d/%y') }}">
+        </div>
+        <div class="col-sm-4">
+          {{ desc_field('edit_' ~ gi ~ '_desc', r.bank_tx, 'miss-' ~ gi) }}
+        </div>
+        <div class="col-sm-2">
+          <label class="form-label small mb-1">Check #</label>
+          <input type="text" class="form-control form-control-sm"
+                 name="edit_{{ gi }}_check" value="{{ r.bank_tx.check_number }}"
+                 {% if not has_check %}disabled placeholder="not configured"{% endif %}>
+        </div>
+        <div class="col-sm-2 d-flex align-items-end pb-1">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox"
+                   name="receipt_{{ gi }}" id="receipt_{{ gi }}"
+                   {% if not has_receipt %}disabled{% endif %}>
+            <label class="form-check-label small {% if not has_receipt %}text-muted{% endif %}" for="receipt_{{ gi }}">Receipt</label>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+
+
+{# Spacer for sticky bar #}
+<div style="height: 80px;"></div>
+
+</form>
+
+{# ═══════════════════════════════════════════════════════════
+   STICKY CONFIRM BAR
+═══════════════════════════════════════════════════════════ #}
+<div id="confirm-bar">
+  <div class="d-flex align-items-center justify-content-between gap-3">
+    <div id="progress-text" class="text-white-50">
+      {% if needs_choice > 0 %}
+        <span id="remaining-count">{{ needs_choice }}</span> of {{ needs_choice }} decisions needed
+      {% else %}
+        No manual decisions required
+      {% endif %}
+    </div>
+    <button type="submit" form="review-form"
+            class="btn btn-success btn-lg px-4"
+            id="proceed-btn"
+            {% if needs_choice > 0 %}disabled{% endif %}>
+      <i class="bi bi-check2-all me-1"></i> Proceed &amp; Save
+    </button>
+  </div>
+</div>
+
+{# ── Quick-add nickname modal ─────────────────────────────────────────── #}
+<div class="modal fade" id="nicknameModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-tag-fill me-1"></i> Save Nickname</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">CSV Description (source)</label>
+          <div class="font-monospace small bg-light border rounded p-2" id="nm-csv-desc" style="word-break:break-all"></div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">Regex Pattern <span class="text-muted fw-normal">(edit as needed)</span></label>
+          <div class="input-group input-group-sm">
+            <input type="text" class="form-control form-control-sm font-monospace" id="nm-pattern">
+            <button type="button" class="btn btn-outline-info" id="nm-test-btn">Test</button>
+          </div>
+          <div id="nm-test-result" class="mt-1 small d-none"></div>
+          <div class="form-text">Use <code>.*</code> or <code>|</code> to match variations.</div>
+        </div>
+        <div class="mb-1">
+          <label class="form-label small fw-semibold">Nickname</label>
+          <input type="text" class="form-control form-control-sm" id="nm-nickname" placeholder="Short name for spreadsheet">
+        </div>
+        <div id="nm-error" class="text-danger small mt-1 d-none"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm" id="nm-save">
+          <i class="bi bi-check-lg me-1"></i> Save &amp; Apply
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── State ──────────────────────────────────────────────────────
+const requiresSelection = new Set();
+{% for r in multi_results %}{% set gi = results.index(r) %}requiresSelection.add({{ gi }});{% endfor %}
+{% for r in oor_results %}{% set gi = results.index(r) %}requiresSelection.add({{ gi }});{% endfor %}
+
+const resolved = new Set();
+const totalRequired = requiresSelection.size;
+
+// ── Duplicate prevention ───────────────────────────────────────
+function updateDisabledChoices() {
+  // Collect all currently selected non-skip row indices
+  const usedIndices = new Set();
+  document.querySelectorAll('.choice-radio:checked').forEach(function(radio) {
+    if (radio.value !== 'skip') usedIndices.add(radio.value);
+  });
+
+  // Disable radios whose row_index is already claimed by another card
+  document.querySelectorAll('.choice-radio').forEach(function(radio) {
+    if (radio.value === 'skip') return;
+    const alreadyUsed = usedIndices.has(radio.value) && !radio.checked;
+    radio.disabled = alreadyUsed;
+    const row = radio.closest('tr');
+    if (row) {
+      row.classList.toggle('table-secondary', alreadyUsed);
+      row.classList.toggle('text-muted', alreadyUsed);
+      row.style.opacity = alreadyUsed ? '0.45' : '';
+    }
+  });
+}
+
+// ── Choice change handler ──────────────────────────────────────
+function onChoiceChange(cardIdx) {
+  resolved.add(cardIdx);
+  const warn = document.getElementById('warn-' + cardIdx);
+  if (warn) warn.classList.add('d-none');
+
+  // Highlight the selected row, de-highlight others
+  document.querySelectorAll('input[name="choice_' + cardIdx + '"]').forEach(function(radio) {
+    const row = radio.closest('tr');
+    if (row) row.classList.toggle('table-radio-selected', radio.checked);
+  });
+
+  const selectedRadio = document.querySelector('input[name="choice_' + cardIdx + '"]:checked');
+  const isSkip = selectedRadio && selectedRadio.value === 'skip';
+
+  // Show/hide the candidate edit panel
+  const editPanel = document.getElementById('edit-panel-' + cardIdx);
+  if (editPanel) {
+    if (!isSkip && selectedRadio) {
+      const dataRow = selectedRadio.closest('tr');
+      const dateEl  = document.getElementById('edit_' + cardIdx + '_date');
+      const descEl  = document.getElementById('edit_' + cardIdx + '_desc');
+      const checkEl = document.getElementById('edit_' + cardIdx + '_check');
+      const rcptEl  = document.getElementById('edit_' + cardIdx + '_receipt');
+      if (dateEl)  dateEl.value   = dataRow ? (dataRow.dataset.date  || '') : '';
+      if (descEl)  descEl.value   = dataRow ? (dataRow.dataset.desc  || '') : '';
+      if (checkEl) checkEl.value  = dataRow ? (dataRow.dataset.check || '') : '';
+      if (rcptEl)  rcptEl.checked = dataRow ? (dataRow.dataset.receipt === 'true') : false;
+      editPanel.classList.remove('d-none');
+    } else {
+      editPanel.classList.add('d-none');
+    }
+  }
+
+  // Show/hide the skip panel
+  const skipPanel = document.getElementById('skip-panel-' + cardIdx);
+  if (skipPanel) {
+    if (isSkip) {
+      skipPanel.classList.remove('d-none');
+    } else {
+      skipPanel.classList.add('d-none');
+      // Reset skip panel radio to "skip" when user un-skips
+      const skipRadio = document.getElementById('skip_miss_skip_' + cardIdx);
+      if (skipRadio) skipRadio.checked = true;
+    }
+  }
+
+  updateDisabledChoices();
+  updateProceedButton();
+}
+
+// ── Undo skip ──────────────────────────────────────────────────
+function undoSkip(cardIdx) {
+  // Clear the skip radio selection (no radio selected = card needs a decision again)
+  document.querySelectorAll('input[name="choice_' + cardIdx + '"]').forEach(function(r) {
+    r.checked = false;
+    const row = r.closest('tr');
+    if (row) row.classList.remove('table-radio-selected');
+  });
+
+  // Hide skip panel
+  const skipPanel = document.getElementById('skip-panel-' + cardIdx);
+  if (skipPanel) skipPanel.classList.add('d-none');
+
+  // Hide edit panel too
+  const editPanel = document.getElementById('edit-panel-' + cardIdx);
+  if (editPanel) editPanel.classList.add('d-none');
+
+  // Mark as unresolved
+  resolved.delete(cardIdx);
+
+  // Show the warning so the user knows they need to choose
+  const warn = document.getElementById('warn-' + cardIdx);
+  if (warn) warn.classList.remove('d-none');
+
+  updateDisabledChoices();
+  updateProceedButton();
+
+  // Scroll back to the card
+  const card = document.getElementById('card-multi-' + cardIdx) || document.getElementById('card-oor-' + cardIdx);
+  if (card) card.scrollIntoView({behavior: 'smooth', block: 'center'});
+}
+
+function selectRadio(radioId, cardIdx) {
+  const radio = document.getElementById(radioId);
+  if (radio && !radio.disabled) {
+    radio.checked = true;
+    onChoiceChange(cardIdx);
+  }
+}
+
+// ── Missing transaction add/skip toggle ────────────────────────
+function toggleMissingAdd(idx, show) {
+  const panel = document.getElementById('miss-panel-' + idx);
+  if (panel) panel.classList.toggle('d-none', !show);
+  if (!show) {
+    const chk = document.querySelector('[name="receipt_' + idx + '"]');
+    if (chk) chk.checked = false;
+  }
+}
+
+// ── Proceed button ─────────────────────────────────────────────
+function updateProceedButton() {
+  const remaining = totalRequired - resolved.size;
+  const btn = document.getElementById('proceed-btn');
+  const txt = document.getElementById('remaining-count');
+  if (txt) txt.textContent = remaining;
+  btn.disabled = remaining > 0;
+}
+
+// ── Form submit validation ─────────────────────────────────────
+document.getElementById('review-form').addEventListener('submit', function(e) {
+  let firstProblem = null;
+  requiresSelection.forEach(function(gi) {
+    if (!resolved.has(gi)) {
+      const warn = document.getElementById('warn-' + gi);
+      if (warn) warn.classList.remove('d-none');
+      if (!firstProblem) {
+        firstProblem = document.getElementById('card-multi-' + gi) || document.getElementById('card-oor-' + gi);
+      }
+    }
+  });
+  if (firstProblem) {
+    firstProblem.scrollIntoView({behavior: 'smooth', block: 'center'});
+    e.preventDefault();
+  }
+});
+
+updateProceedButton();
+updateDisabledChoices();
+
+// ── Form state save/restore via sessionStorage ──────────────────────────
+const REVIEW_STATE_KEY = 'reconciler_review_state';
+
+function saveReviewState() {
+  const form = document.getElementById('review-form');
+  if (!form) return;
+  const state = {};
+  form.querySelectorAll('input, select, textarea').forEach(el => {
+    if (!el.name) return;
+    if (el.type === 'checkbox') state[el.name] = el.checked;
+    else if (el.type === 'radio') { if (el.checked) state[el.name] = el.value; }
+    else state[el.name] = el.value;
+  });
+  sessionStorage.setItem(REVIEW_STATE_KEY, JSON.stringify(state));
+}
+
+function restoreReviewState() {
+  const raw = sessionStorage.getItem(REVIEW_STATE_KEY);
+  if (!raw) return;
+  let state;
+  try { state = JSON.parse(raw); } catch(e) { return; }
+  const form = document.getElementById('review-form');
+  if (!form) return;
+  form.querySelectorAll('input, select, textarea').forEach(el => {
+    if (!el.name || !(el.name in state)) return;
+    if (el.type === 'checkbox') el.checked = state[el.name];
+    else if (el.type === 'radio') { if (state[el.name] === el.value) el.checked = true; }
+    else el.value = state[el.name];
+  });
+  // Re-run UI logic after restoring
+  document.querySelectorAll('.choice-radio:checked').forEach(r => onChoiceChange(parseInt(r.dataset.card)));
+  document.querySelectorAll('input[id^="miss_add_"]:checked').forEach(r => {
+    const gi = r.id.replace('miss_add_', '');
+    toggleMissingAdd(parseInt(gi), true);
+  });
+  updateProceedButton();
+  updateDisabledChoices();
+  sessionStorage.removeItem(REVIEW_STATE_KEY);
+}
+
+// Save state when navigating to Nicknames or Settings
+document.querySelectorAll('a[href*="/nicknames"], a[href*="/settings"]').forEach(a => {
+  a.addEventListener('click', saveReviewState);
+});
+
+restoreReviewState();
+
+// ── Nickname quick-add modal ────────────────────────────────────────────
+document.addEventListener('click', function(e) {
+  const btn = e.target.closest('.nm-tag-btn');
+  if (btn) openNicknameModal(btn.dataset.gi, btn.dataset.csv);
+});
+
+let _nmSelId   = null;
+let _nmCsvDesc  = null;
+const nmModal = new bootstrap.Modal(document.getElementById('nicknameModal'));
+
+function openNicknameModal(giSuffix, csvDesc) {
+  _nmSelId   = 'desc-sel-' + giSuffix;
+  _nmCsvDesc = csvDesc;
+  document.getElementById('nm-csv-desc').textContent = csvDesc;
+  const escaped = csvDesc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  document.getElementById('nm-pattern').value = escaped;
+  document.getElementById('nm-nickname').value = '';
+  document.getElementById('nm-error').classList.add('d-none');
+  document.getElementById('nm-test-result').classList.add('d-none');
+  nmModal.show();
+  setTimeout(() => document.getElementById('nm-nickname').focus(), 300);
+}
+
+function nmRunTest() {
+  const pattern = document.getElementById('nm-pattern').value.trim();
+  const desc    = _nmCsvDesc || '';
+  const out     = document.getElementById('nm-test-result');
+  out.classList.remove('d-none');
+  if (!pattern) { out.innerHTML = '<span class="text-muted">Enter a pattern to test.</span>'; return; }
+  try {
+    const matched = new RegExp(pattern, 'i').test(desc);
+    out.innerHTML = matched
+      ? '<span class="text-success"><i class="bi bi-check-circle-fill me-1"></i>Matches the CSV description.</span>'
+      : '<span class="text-danger"><i class="bi bi-x-circle-fill me-1"></i>No match.</span>';
+  } catch(e) {
+    out.innerHTML = '<span class="text-danger"><i class="bi bi-exclamation-triangle me-1"></i>Invalid regex: ' + e.message + '</span>';
+  }
+}
+
+document.getElementById('nm-test-btn').addEventListener('click', nmRunTest);
+document.getElementById('nm-pattern').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') { e.preventDefault(); nmRunTest(); }
+});
+
+document.getElementById('nm-save').addEventListener('click', function() {
+  const pattern  = document.getElementById('nm-pattern').value.trim();
+  const nickname = document.getElementById('nm-nickname').value.trim();
+  const errEl    = document.getElementById('nm-error');
+  if (!pattern || !nickname) {
+    errEl.textContent = 'Both fields are required.';
+    errEl.classList.remove('d-none');
+    return;
+  }
+  const fd = new FormData();
+  fd.append('pattern', pattern);
+  fd.append('nickname', nickname);
+  fetch('/nicknames/quick-add', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(data => {
+      if (!data.ok) {
+        errEl.textContent = data.error || 'Error saving nickname.';
+        errEl.classList.remove('d-none');
+        return;
+      }
+      // Insert new option at top of select and select it
+      if (_nmSelId) {
+        const sel = document.getElementById(_nmSelId);
+        if (sel) {
+          const opt = new Option(nickname + ' (nickname)', nickname, true, true);
+          sel.insertBefore(opt, sel.options[0]);
+          sel.value = nickname;
+        }
+      }
+      nmModal.hide();
+    });
+});
+</script>
+{% endblock %}

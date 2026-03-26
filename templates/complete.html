@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}Bank Reconciler – Complete{% endblock %}
+
+{% block content %}
+
+<div class="text-center mb-4">
+  <div class="display-1 mb-2">
+    {% if balance_match %}
+      <i class="bi bi-check-circle-fill text-success"></i>
+    {% else %}
+      <i class="bi bi-exclamation-circle-fill text-danger"></i>
+    {% endif %}
+  </div>
+  <h2 class="fw-bold">
+    {% if balance_match %}
+      Reconciliation Complete!
+    {% else %}
+      Reconciliation Saved — Balance Check Failed
+    {% endif %}
+  </h2>
+  <p class="text-muted">Reconcile date: <strong>{{ recon_date }}</strong></p>
+</div>
+
+{% if save_error %}
+<div class="alert alert-danger">
+  <i class="bi bi-exclamation-triangle-fill me-2"></i>
+  <strong>Save error:</strong> {{ save_error }}
+</div>
+{% endif %}
+
+{# ── Balance Check ── #}
+<div class="card {% if balance_match %}border-success{% else %}border-danger{% endif %} shadow-sm mb-4">
+  <div class="card-header {% if balance_match %}bg-success text-white{% else %}bg-danger text-white{% endif %} fw-semibold">
+    {% if balance_match %}
+      <i class="bi bi-check-circle-fill me-1"></i> Balance verified
+    {% else %}
+      <i class="bi bi-x-circle-fill me-1"></i> Balance mismatch — please review
+    {% endif %}
+  </div>
+  <div class="card-body">
+    <div class="row text-center g-3">
+      <div class="col-md-4">
+        <div class="bal-label">Previous Reconciled Balance</div>
+        <div class="bal-value">{% if last_recon_bal %}${{ last_recon_bal }}{% else %}<span class="text-muted">N/A</span>{% endif %}</div>
+      </div>
+      <div class="col-md-4">
+        <div class="bal-label">Computed Ending Balance</div>
+        <div class="bal-value {% if balance_match %}text-success{% else %}text-danger{% endif %}">
+          {% if computed_ending %}${{ computed_ending }}{% else %}<span class="text-muted">N/A</span>{% endif %}
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="bal-label">Entered Ending Balance</div>
+        <div class="bal-value">{% if ending_bal %}${{ ending_bal }}{% else %}<span class="text-muted">N/A</span>{% endif %}</div>
+      </div>
+    </div>
+    {% if not balance_match %}
+    <div class="text-muted small text-center mt-2">
+      <i class="bi bi-info-circle me-1"></i>
+      Difference may be due to skipped transactions. Only applied transactions are included in the computed balance.
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{# ── Summary Stats ── #}
+<div class="section-header"><i class="bi bi-bar-chart me-1"></i> Summary</div>
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card text-center border-success shadow-sm h-100">
+      <div class="card-body">
+        <div class="fs-1 fw-bold text-success">{{ stats.auto }}</div>
+        <div class="text-muted small text-uppercase">Auto-Matched</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card text-center border-primary shadow-sm h-100">
+      <div class="card-body">
+        <div class="fs-1 fw-bold text-primary">{{ stats.manual }}</div>
+        <div class="text-muted small text-uppercase">Manually Matched</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card text-center border-warning shadow-sm h-100">
+      <div class="card-body">
+        <div class="fs-1 fw-bold text-warning">{{ stats.inserted }}</div>
+        <div class="text-muted small text-uppercase">Inserted</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card text-center border-secondary shadow-sm h-100">
+      <div class="card-body">
+        <div class="fs-1 fw-bold text-secondary">{{ stats.skipped }}</div>
+        <div class="text-muted small text-uppercase">Skipped</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Inserted Transactions ── #}
+{% if inserted_txs %}
+<div class="section-header"><i class="bi bi-plus-circle text-warning me-1"></i> Inserted Transactions</div>
+<div class="card shadow-sm mb-4">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Date</th>
+            <th>Description</th>
+            <th>Amount</th>
+            <th>Receipt</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for tx in inserted_txs %}
+          <tr>
+            <td>{{ tx.date }}</td>
+            <td>{{ tx.description }}</td>
+            <td class="{% if tx.amount | float < 0 %}text-danger{% else %}text-success{% endif %}">
+              ${{ '%.2f' | format(tx.amount | float | abs) }}
+            </td>
+            <td>
+              {% if tx.receipt %}
+                <span class="badge bg-success"><i class="bi bi-check-lg"></i> √</span>
+              {% else %}
+                <span class="badge bg-secondary">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ── Save location ── #}
+{% if saved_to_path %}
+<div class="alert alert-success">
+  <i class="bi bi-check-circle-fill me-2"></i>
+  Spreadsheet saved to <strong>{{ saved_to_path }}</strong>
+</div>
+{% endif %}
+
+{# ── Actions ── #}
+<div class="d-flex gap-3 justify-content-center mt-4 flex-wrap">
+  {% if save_mode == "download" %}
+  <a href="/download" class="btn btn-success btn-lg">
+    <i class="bi bi-download me-1"></i> Download Updated Spreadsheet
+  </a>
+  {% endif %}
+  <a href="/" class="btn btn-outline-primary btn-lg">
+    <i class="bi bi-arrow-repeat me-1"></i> Reconcile Again
+  </a>
+  <form method="POST" action="/shutdown" onsubmit="return confirm('Shut down the reconciler server?')">
+    <button type="submit" class="btn btn-outline-danger btn-lg">
+      <i class="bi bi-power me-1"></i> Shut Down
+    </button>
+  </form>
+</div>
+
+{% endblock %}
