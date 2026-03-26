@@ -1,6 +1,25 @@
 import json
 import re
+import threading
 from pathlib import Path
+
+_MATCH_TIMEOUT = 1.0  # seconds before a regex match is considered pathological
+
+
+def _safe_search(pattern: str, text: str) -> bool:
+    """Run re.search in a thread; return False if it exceeds _MATCH_TIMEOUT."""
+    result: list[bool] = [False]
+
+    def _run():
+        try:
+            result[0] = bool(re.search(pattern, text, re.IGNORECASE))
+        except re.error:
+            result[0] = False
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(_MATCH_TIMEOUT)
+    return result[0]  # False on timeout or error
 
 _NICKNAMES_FILE = Path(__file__).parent.parent / "nicknames.json"
 
@@ -32,11 +51,8 @@ def match_description(description: str, nicknames: list[dict] | None = None) -> 
         nicknames = load_nicknames()
     matches = []
     for entry in nicknames:
-        try:
-            if re.search(entry["pattern"], description, re.IGNORECASE):
-                matches.append(entry)
-        except re.error:
-            pass
+        if _safe_search(entry["pattern"], description):
+            matches.append(entry)
     return matches
 
 

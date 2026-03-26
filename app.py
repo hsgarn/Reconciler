@@ -611,14 +611,27 @@ def confirm():
 
 @app.route("/shutdown", methods=["POST"])
 def shutdown():
-    os._exit(0)
+    import threading
+    def _kill():
+        import time
+        time.sleep(0.6)
+        os._exit(0)
+    threading.Thread(target=_kill, daemon=True).start()
+    return """<!doctype html>
+<html><head><title>Shutting down…</title></head>
+<body>
+<script>window.close();</script>
+<p style="font-family:sans-serif;text-align:center;margin-top:4em;color:#555">
+  Server shut down. You may close this window.
+</p>
+</body></html>"""
 
 
 @app.route("/download")
 def download():
     from flask import send_file
     ods_path = session.get("ods_path")
-    original_name = session.get("ods_original_name", "reconcile.ods")
+    original_name = os.path.basename(session.get("ods_original_name", "reconcile.ods"))
     if not ods_path or not os.path.exists(ods_path):
         return redirect(url_for("index"))
     return send_file(ods_path, as_attachment=True, download_name=original_name)
@@ -755,4 +768,5 @@ def settings_page():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+    app.run(debug=debug)

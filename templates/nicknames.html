@@ -151,12 +151,24 @@ document.getElementById('testBtn').addEventListener('click', function() {
   fetch('/api/nicknames/match?desc=' + encodeURIComponent(desc))
     .then(r => r.json())
     .then(data => {
+      out.innerHTML = '';
       if (data.matches.length === 0) {
-        out.innerHTML = '<span class="text-muted">No matches.</span>';
+        const s = document.createElement('span');
+        s.className = 'text-muted';
+        s.textContent = 'No matches.';
+        out.appendChild(s);
       } else {
-        out.innerHTML = data.matches.map(m =>
-          `<span class="badge bg-success me-1">${m.nickname}</span> <code class="text-muted small">${m.pattern}</code>`
-        ).join('<br>');
+        data.matches.forEach((m, i) => {
+          if (i > 0) out.appendChild(document.createElement('br'));
+          const badge = document.createElement('span');
+          badge.className = 'badge bg-success me-1';
+          badge.textContent = m.nickname;
+          const code = document.createElement('code');
+          code.className = 'text-muted small';
+          code.textContent = m.pattern;
+          out.appendChild(badge);
+          out.appendChild(code);
+        });
       }
     });
 });
