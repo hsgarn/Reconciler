@@ -39,6 +39,31 @@
             </div>
           </div>
 
+          <!-- PDF Statement -->
+          <div class="mb-3">
+            <label for="pdf_path" class="form-label fw-semibold">
+              Bank Statement PDF <span class="text-muted fw-normal">(optional)</span>
+            </label>
+            <div class="input-group">
+              <input type="text" class="form-control" id="pdf_path" name="pdf_path"
+                     placeholder="Click Browse… to select PDF" readonly>
+              <button type="button" class="btn btn-outline-secondary browse-btn" data-type="pdf" data-target="pdf_path">
+                <i class="bi bi-folder2-open me-1"></i> Browse…
+              </button>
+            </div>
+            <div id="stmt-dates" class="mt-2 d-none">
+              <div class="alert alert-info py-2 mb-0 d-flex gap-4 align-items-center">
+                <span><i class="bi bi-calendar-range me-1"></i>
+                  <strong>Statement period:</strong>
+                  <span id="stmt-first-date" class="ms-1"></span>
+                  <span class="mx-1">–</span>
+                  <span id="stmt-last-date"></span>
+                </span>
+              </div>
+            </div>
+            <div id="stmt-error" class="mt-1 text-danger small d-none"></div>
+          </div>
+
           <!-- CSV Path -->
           <div class="mb-3">
             <label for="csv_path" class="form-label fw-semibold">
@@ -159,6 +184,49 @@ LS_KEYS.forEach(lsRestore);
   if (el) el.addEventListener('input', function() { lsSave(id); });
 });
 
+// ── PDF statement parsing ───────────────────────────────────────────────
+function parsePdf(path) {
+  const datesEl  = document.getElementById('stmt-dates');
+  const errorEl  = document.getElementById('stmt-error');
+  const firstEl  = document.getElementById('stmt-first-date');
+  const lastEl   = document.getElementById('stmt-last-date');
+  datesEl.classList.add('d-none');
+  errorEl.classList.add('d-none');
+
+  fetch('/parse-pdf?path=' + encodeURIComponent(path))
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        errorEl.textContent = 'PDF parse error: ' + data.error;
+        errorEl.classList.remove('d-none');
+        return;
+      }
+      if (data.first_date || data.last_date) {
+        firstEl.textContent = data.first_date || '—';
+        lastEl.textContent  = data.last_date  || '—';
+        datesEl.classList.remove('d-none');
+      }
+      if (data.recon_date) {
+        const reconEl = document.getElementById('recon_date');
+        if (reconEl) {
+          reconEl.value = data.recon_date;
+          lsSave('recon_date');
+        }
+      }
+      if (data.reconciled_amount) {
+        const balEl = document.getElementById('ending_bal');
+        if (balEl) {
+          balEl.value = data.reconciled_amount;
+          lsSave('ending_bal');
+        }
+      }
+    })
+    .catch(err => {
+      errorEl.textContent = 'Could not read PDF: ' + err;
+      errorEl.classList.remove('d-none');
+    });
+}
+
 // ── Browse buttons ──────────────────────────────────────────────────────
 document.querySelectorAll('.browse-btn').forEach(function(btn) {
   btn.addEventListener('click', function() {
@@ -179,6 +247,9 @@ document.querySelectorAll('.browse-btn').forEach(function(btn) {
               document.getElementById('recon_date').value = match[2] + '/' + match[3] + '/' + year;
               lsSave('recon_date');
             }
+          }
+          if (type === 'pdf') {
+            parsePdf(data.path);
           }
         }
       })

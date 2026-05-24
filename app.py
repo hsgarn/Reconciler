@@ -157,6 +157,9 @@ def browse():
     if kind == "csv":
         title = "Select Bank Transaction CSV"
         filt = "CSV files (*.csv)|*.csv|All files (*.*)|*.*"
+    elif kind == "pdf":
+        title = "Select Bank Statement PDF"
+        filt = "PDF files (*.pdf)|*.pdf|All files (*.*)|*.*"
     else:
         title = "Select ODS Spreadsheet"
         filt = "ODS files (*.ods)|*.ods|All files (*.*)|*.*"
@@ -196,6 +199,58 @@ def browse():
         prefs[f"last_dir_{kind}"] = str(Path(path).parent)
         _save_prefs(prefs)
     return jsonify(path=path)
+
+
+@app.route("/parse-pdf")
+def parse_pdf():
+    import re
+    import pdfplumber
+
+    pdf_path = request.args.get("path", "").strip()
+    if not pdf_path or not os.path.exists(pdf_path):
+        return jsonify(error="File not found"), 404
+
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            page = pdf.pages[0]
+            text = page.extract_text() or ""
+
+        if request.args.get("debug") == "1":
+            return jsonify(raw_text=text)
+
+        lines = text.splitlines()
+        date_re   = re.compile(r'\d{2}/\d{2}/\d{2}')
+        amount_re = re.compile(r'\$[\d,]+\.\d{2}')
+        period_re = re.compile(
+            r'FOR\s+THE\s+PERIOD\s+FROM\s*(\d{2}/\d{2}/\d{2})\s+THROUGH\s*(\d{2}/\d{2}/\d{2})',
+            re.IGNORECASE,
+        )
+
+        first_date = last_date = recon_date = reconciled_amount = None
+
+        # Search full text so the pattern matches even when line-wrapped
+        m = period_re.search(text)
+        if m:
+            first_date = m.group(1)
+            last_date  = m.group(2)
+
+        for line in lines:
+            if "NEW BALANCE" in line.upper():
+                dm = date_re.search(line)
+                if dm:
+                    recon_date = dm.group()
+                am = amount_re.search(line)
+                if am:
+                    reconciled_amount = am.group()[1:]  # strip leading $
+
+        return jsonify(
+            first_date=first_date,
+            last_date=last_date,
+            recon_date=recon_date,
+            reconciled_amount=reconciled_amount,
+        )
+    except Exception as e:
+        return jsonify(error=str(e)), 500
 
 
 @app.route("/process", methods=["POST"])
