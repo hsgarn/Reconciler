@@ -15,7 +15,7 @@ To stop the server, click the **Shut Down** button in the top-right corner of an
 ## Requirements
 
 - Python 3.11+
-- Dependencies: `pip install -r requirements.txt`
+- Dependencies: `pip install -r requirements.txt` (includes `pdfplumber` for PDF statement parsing)
 - Google Chrome installed
 
 ---
@@ -24,13 +24,17 @@ To stop the server, click the **Shut Down** button in the top-right corner of an
 
 ### 1. Start Reconciliation (`/`)
 
+- **Bank Statement PDF** *(optional)* — Click **Browse…** to select the PDF of your bank statement. When selected, the app reads the statement and automatically:
+  - Displays the **statement period** (e.g. `03/21/26 – 04/21/26`) parsed from the `FOR THE PERIOD FROM … THROUGH …` line.
+  - Pre-fills **Reconcile Date** with the closing date from the `NEW BALANCE` line.
+  - Pre-fills **Ending Reconciled Balance** with the closing balance from the `NEW BALANCE` line.
 - **ODS Spreadsheet** — Click **Browse…** to select your `reconcile.ods` file. The dialog opens to the last directory you used.
-- **Bank Transaction CSV** — Click **Browse…** to select the CSV exported from your bank. Expected filename pattern: `Transactions-YYYY-MM-DD.csv`. The reconcile date is auto-filled from the filename.
-- **Reconcile Date** — Auto-filled from the CSV filename; edit if needed. Format: `MM/DD/YY`.
-- **Ending Reconciled Balance** — Enter the closing balance from your bank statement.
+- **Bank Transaction CSV** — Click **Browse…** to select the CSV exported from your bank. Expected filename pattern: `Transactions-YYYY-MM-DD.csv`. The reconcile date is auto-filled from the CSV filename if not already set by the PDF.
+- **Reconcile Date** — Auto-filled from the PDF or CSV filename; edit if needed. Format: `MM/DD/YY`.
+- **Ending Reconciled Balance** — Auto-filled from the PDF; edit if needed.
 - **After Reconciling** — Choose **Overwrite original file** (default) or **Download updated file**.
 
-All four fields are remembered across sessions (stored in `localStorage`) so returning next month pre-fills everything.
+All fields are remembered across sessions (stored in `localStorage`) so returning next month pre-fills everything. Selecting a new PDF always overwrites the Reconcile Date and Ending Reconciled Balance with the values from that statement.
 
 If the reconcile date already exists in the spreadsheet, a warning page is shown before proceeding.
 
@@ -175,6 +179,7 @@ Expected filename pattern: `Transactions-YYYY-MM-DD.csv`
 | `templates/` | Jinja2 HTML templates |
 | `static/` | CSS and static assets |
 | `prefs.json` | Persistent preferences (last directories, secret key) — auto-created |
+| `requirements.txt` | Python dependencies including `pdfplumber` for PDF parsing |
 | `nicknames.json` | Saved nickname patterns — auto-created |
 | `ReconcileIcon.ico` | Application icon for the launcher shortcut |
 
@@ -208,7 +213,7 @@ The **Last Reconciled Balance** is read from column I of the last row that alrea
 
 | Data | Storage |
 |---|---|
-| ODS/CSV file paths, reconcile date, ending balance | Browser `localStorage` (survives navigation) |
+| ODS/CSV/PDF file paths, reconcile date, ending balance | Browser `localStorage` (survives navigation) |
 | Flask session state (temp file paths, flags) | Server-side session cookie (stable key in `prefs.json`) |
 | Last-used browse directories | `prefs.json` |
 | Nickname patterns | `nicknames.json` |
