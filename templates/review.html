@@ -11,6 +11,9 @@
 {% set needs_choice    = multi_results | length + oor_results | length %}
 {% if oor_all_matches is not defined %}{% set oor_all_matches = {} %}{% endif %}
 {% if nickname_matches is not defined %}{% set nickname_matches = {} %}{% endif %}
+{% if extras is not defined %}{% set extras = [] %}{% endif %}
+{% if extra_hints is not defined %}{% set extra_hints = {} %}{% endif %}
+{% if link_options is not defined %}{% set link_options = {} %}{% endif %}
 
 {# ── Macro: nickname-aware description field ── #}
 {% macro desc_field(field_name, bank_tx, gi_suffix) %}
@@ -39,6 +42,7 @@
     <span class="badge bg-primary fs-6"><i class="bi bi-list-ul"></i> {{ multi_results | length }} multi</span>
     <span class="badge bg-warning text-dark fs-6"><i class="bi bi-exclamation-triangle"></i> {{ oor_results | length }} out-of-range</span>
     <span class="badge bg-danger fs-6"><i class="bi bi-question-circle"></i> {{ missing_results | length }} missing</span>
+    {% if extras %}<span class="badge bg-info text-dark fs-6"><i class="bi bi-files"></i> {{ extras | length }} extra</span>{% endif %}
     <a href="/" class="btn btn-outline-secondary btn-sm">
       <i class="bi bi-arrow-left-circle me-1"></i> Start Over
     </a>
@@ -562,6 +566,31 @@
       </div>
     </div>
 
+    {% if link_options.get(gi) %}
+    <div class="mb-2" id="link-wrap-{{ gi }}">
+      <label class="form-label small mb-1" for="link_{{ gi }}">
+        <i class="bi bi-link-45deg me-1"></i>Or match an existing spreadsheet row and correct its amount
+      </label>
+      <select class="form-select form-select-sm link-select" name="link_{{ gi }}" id="link_{{ gi }}"
+              data-gi="{{ gi }}" onchange="onLinkChange({{ gi }})">
+        <option value="" data-amount="">— none: insert as a new entry —</option>
+        {% for o in link_options[gi] %}
+        <option value="{{ o.row.row_index }}"
+                data-row="{{ o.row.sheet_row }}"
+                data-amount="{{ '%.2f' | format(o.row.amount | float) }}"
+                data-new="{{ '%.2f' | format(r.bank_tx.amount | float) }}">
+          {%- if o.kind == 'sign' %}⚠ Sign flipped · {% elif o.kind == 'close' %}≈ Amount close · {% endif -%}
+          Row {{ o.row.sheet_row }} · {{ o.row.date.strftime('%m/%d/%y') }} · {{ o.row.description }} · ${{ '%.2f' | format(o.row.amount | float) }}
+        </option>
+        {% endfor %}
+      </select>
+      <div class="small text-info-emphasis mt-1 d-none" id="link-note-{{ gi }}">
+        <i class="bi bi-info-circle me-1"></i>
+        <span id="link-note-text-{{ gi }}"></span>
+      </div>
+    </div>
+    {% endif %}
+
     {# Add panel — editable fields + receipt, revealed when Add selected #}
     <div class="edit-panel border rounded p-3 bg-light" id="miss-panel-{{ gi }}">
       <div class="small fw-semibold text-muted mb-2"><i class="bi bi-pencil me-1"></i>Entry to insert (edit if needed)</div>
@@ -593,6 +622,58 @@
   </div>
 </div>
 {% endfor %}
+{% endif %}
+
+
+{# ═══════════════════════════════════════════════════════════
+   6. EXTRA TRANSACTIONS  (unreconciled sheet rows with no CSV match)
+═══════════════════════════════════════════════════════════ #}
+{% if extras %}
+<div class="section-header">
+  <i class="bi bi-files text-info me-1"></i> Extra Transactions
+  <span class="text-muted fw-normal fs-6 ms-2">(in the spreadsheet for this period, but not matched to the CSV)</span>
+</div>
+<div class="card shadow-sm mb-4">
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th>Row</th>
+          <th>Date</th>
+          <th>Description</th>
+          {% if has_check %}<th>Check #</th>{% endif %}
+          <th class="text-end">Amount</th>
+          <th>Possible cause</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in extras %}
+        {% set hs = extra_hints.get(row.row_index, []) %}
+        <tr{% if hs and hs[0].kind == 'sign' %} class="table-warning"{% endif %}>
+          <td class="text-nowrap fw-semibold">{{ row.sheet_row }}</td>
+          <td class="text-nowrap">{{ row.date.strftime('%m/%d/%y') }}</td>
+          <td>{{ row.description }}</td>
+          {% if has_check %}<td>{{ row.check_number }}</td>{% endif %}
+          <td class="text-end text-nowrap {% if row.amount < 0 %}text-danger{% else %}text-success{% endif %}">
+            {{ '%.2f' | format(row.amount | float) }}
+          </td>
+          <td class="small">
+            {% for h in hs %}
+              {% if h.kind == 'sign' %}
+              <div><span class="badge bg-warning text-dark">Sign flipped?</span> CSV has {{ h.bank }}</div>
+              {% else %}
+              <div><span class="badge bg-info text-dark">Amount close</span> CSV has {{ h.bank }}</div>
+              {% endif %}
+            {% else %}
+              <span class="text-muted">No matching CSV transaction — edit or remove this row?</span>
+            {% endfor %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
 {% endif %}
 
 
@@ -787,12 +868,48 @@ function selectRadio(radioId, cardIdx) {
 
 // ── Missing transaction add/skip toggle ────────────────────────
 function toggleMissingAdd(idx, show) {
-  const panel = document.getElementById('miss-panel-' + idx);
-  if (panel) panel.classList.toggle('d-none', !show);
   if (!show) {
     const chk = document.querySelector('[name="receipt_' + idx + '"]');
     if (chk) chk.checked = false;
   }
+  refreshMissing(idx);
+}
+
+// Show the insert panel, the link drop-down and its note according to the
+// Skip/Add radio and whether an existing row has been chosen.
+function refreshMissing(idx) {
+  const addRadio = document.getElementById('miss_add_' + idx);
+  const add = !!(addRadio && addRadio.checked);
+  const sel = document.getElementById('link_' + idx);
+  const linked = !!(sel && sel.value);
+
+  const panel = document.getElementById('miss-panel-' + idx);
+  if (panel) panel.classList.toggle('d-none', !add || linked);
+  const wrap = document.getElementById('link-wrap-' + idx);
+  if (wrap) wrap.classList.toggle('d-none', !add);
+
+  const note = document.getElementById('link-note-' + idx);
+  if (note) {
+    note.classList.toggle('d-none', !(add && linked));
+    if (linked) {
+      const o = sel.options[sel.selectedIndex];
+      document.getElementById('link-note-text-' + idx).textContent =
+        'Row ' + o.dataset.row + ' will be marked reconciled and its amount changed from ' +
+        o.dataset.amount + ' to ' + o.dataset.new + ' (original amount noted in the comment column).';
+    }
+  }
+}
+
+// ── Link drop-downs: each sheet row can be claimed by only one transaction ──
+function onLinkChange(idx) {
+  refreshMissing(idx);
+  const taken = new Set();
+  document.querySelectorAll('.link-select').forEach(function(s) { if (s.value) taken.add(s.value); });
+  document.querySelectorAll('.link-select').forEach(function(s) {
+    Array.from(s.options).forEach(function(o) {
+      o.disabled = !!o.value && taken.has(o.value) && s.value !== o.value;
+    });
+  });
 }
 
 // ── Proceed button ─────────────────────────────────────────────
@@ -859,6 +976,9 @@ function restoreReviewState() {
   document.querySelectorAll('input[id^="miss_add_"]:checked').forEach(r => {
     const gi = r.id.replace('miss_add_', '');
     toggleMissingAdd(parseInt(gi), true);
+  });
+  document.querySelectorAll('.link-select').forEach(s => {
+    if (s.value) onLinkChange(parseInt(s.dataset.gi));
   });
   updateProceedButton();
   updateDisabledChoices();

@@ -8,7 +8,7 @@ from pathlib import Path
 from flask import Flask, jsonify, render_template, request, session, redirect, url_for
 
 from reconciler.csv_reader import load_csv
-from reconciler.matcher import match_all
+from reconciler.matcher import classify_extra, find_extras, match_all
 from reconciler.models import BankTransaction, MatchResult, SpreadsheetRow
 from reconciler.nicknames import (
     load_nicknames,
@@ -24,10 +24,11 @@ from reconciler.settings import (
     col_index,
 )
 from reconciler.ods_reader import list_sheet_names
-from reconciler.ods_reader import load_sheet
+from reconciler.ods_reader import current_reconciled_balance, load_sheet
 from reconciler.ods_writer import (
     insert_transaction,
     save,
+    update_row_amount,
     update_row_fields,
     write_reconciled_date,
 )
@@ -116,6 +117,7 @@ def _row_to_dict(row):
         "reconciled_date": row.reconciled_date,
         "reconciled_balance": row.reconciled_balance,
         "not_reconciled": row.not_reconciled,
+        "sheet_row": row.sheet_row,
     }
 
 
@@ -134,6 +136,7 @@ def _dict_to_row(d):
         reconciled_date=d.get("reconciled_date", ""),
         reconciled_balance=d.get("reconciled_balance"),
         not_reconciled=d.get("not_reconciled"),
+        sheet_row=d.get("sheet_row", 0),
     )
 
 
@@ -325,6 +328,7 @@ def process():
     try:
         unreconciled = [r for r in sheet_rows if not r.reconciled_date]
         results = match_all(bank_txs, unreconciled, date_window=settings["date_window_days"])
+        extras = find_extras(bank_txs, unreconciled, results, settings["date_window_days"])
     except Exception as e:
         return render_template("index.html", error=f"Error matching transactions: {e}")
 
@@ -333,10 +337,7 @@ def process():
     except Exception:
         ending_bal = None
 
-    last_recon_bal = next(
-        (r.reconciled_balance for r in reversed(sheet_rows) if r.reconciled_balance is not None),
-        None,
-    )
+    last_recon_bal = current_reconciled_balance(sheet_rows)
     total_sum = sum(tx.amount for tx in bank_txs)
     computed_bal = (last_recon_bal - total_sum) if last_recon_bal is not None else None
 
@@ -361,6 +362,7 @@ def process():
         "results": json.loads(serialize_results(results)),
         "balance_info": balance_info,
         "oor_all_matches": {str(k): v for k, v in oor_all_matches.items()},
+        "extras": json.loads(json.dumps([_row_to_dict(r) for r in extras], cls=ReconcilerEncoder)),
         "recon_date": recon_date,
         "ending_bal_str": ending_bal_str,
     }
@@ -373,7 +375,7 @@ def process():
     session["has_review"] = True
 
     return _render_review(results, oor_all_matches, nickname_matches,
-                          balance_info, recon_date, ending_bal_str)
+                          balance_info, recon_date, ending_bal_str, extras)
 
 
 def _build_review_extras(results, sheet_rows, recon_date, settings=None):
@@ -418,9 +420,37 @@ def _build_review_extras(results, sheet_rows, recon_date, settings=None):
     return oor_all_matches, nickname_matches
 
 
+_HINT_ORDER = {"sign": 0, "close": 1, None: 2}
+
+
+def _build_extras_view(results, extras, date_window):
+    """Per-extra hints, and per-missing-transaction drop-down options."""
+    date_fmt = "%m/%d/%y"
+    hints = {row.row_index: [] for row in extras}
+    link_options = {}
+    for gi, r in enumerate(results):
+        if r.status != "missing":
+            continue
+        opts = []
+        for row in extras:
+            kind = classify_extra(r.bank_tx, row, date_window)
+            if kind:
+                hints[row.row_index].append({
+                    "kind": kind,
+                    "bank": f"{r.bank_tx.date.strftime(date_fmt)} {r.bank_tx.description} "
+                            f"${r.bank_tx.amount:,.2f}",
+                })
+            opts.append({"row": row, "kind": kind})
+        opts.sort(key=lambda o: (_HINT_ORDER[o["kind"]],
+                                 abs((r.bank_tx.date - o["row"].date).days)))
+        link_options[gi] = opts
+    return hints, link_options
+
+
 def _render_review(results, oor_all_matches, nickname_matches, balance_info,
-                   recon_date, ending_bal_str):
+                   recon_date, ending_bal_str, extras=()):
     s = load_settings()
+    extra_hints, link_options = _build_extras_view(results, extras, s["date_window_days"])
     return render_template(
         "review.html",
         results=results,
@@ -432,6 +462,9 @@ def _render_review(results, oor_all_matches, nickname_matches, balance_info,
         nickname_matches=nickname_matches,
         has_check=s["col_check"] is not None,
         has_receipt=s["col_receipt"] is not None,
+        extras=extras,
+        extra_hints=extra_hints,
+        link_options=link_options,
     )
 
 
@@ -453,6 +486,7 @@ def review():
     recon_date     = cache.get("recon_date", "")
     ending_bal_str = cache.get("ending_bal_str", "")
     oor_all_matches = {int(k): v for k, v in cache.get("oor_all_matches", {}).items()}
+    extras = [_dict_to_row(d) for d in cache.get("extras", [])]
 
     results = [MatchResult(
         bank_tx=_dict_to_tx(r["bank_tx"]),
@@ -471,7 +505,7 @@ def review():
             nickname_matches[desc] = match_description(desc, nicknames)
 
     return _render_review(results, oor_all_matches, nickname_matches,
-                          balance_info, recon_date, ending_bal_str)
+                          balance_info, recon_date, ending_bal_str, extras)
 
 
 @app.route("/confirm", methods=["POST"])
@@ -494,16 +528,34 @@ def confirm():
     bank_txs = load_csv(Path(csv_path), settings)
     unreconciled = [r for r in sheet_rows if not r.reconciled_date]
     results = match_all(bank_txs, unreconciled, date_window=settings["date_window_days"])
+    extras_lookup = {
+        r.row_index: r
+        for r in find_extras(bank_txs, unreconciled, results, settings["date_window_days"])
+    }
 
     # Capture last reconciled balance NOW, before we write anything
-    last_recon_bal = next(
-        (r.reconciled_balance for r in reversed(sheet_rows) if r.reconciled_balance is not None),
-        None,
-    )
+    last_recon_bal = current_reconciled_balance(sheet_rows)
 
     form = request.form
-    stats = {"auto": 0, "manual": 0, "inserted": 0, "skipped": 0}
+    stats = {"auto": 0, "manual": 0, "inserted": 0, "skipped": 0, "corrected": 0}
     inserted_txs = []
+    corrected_txs = []
+    auto_txs = []
+    manual_txs = []
+    skipped_txs = []
+    date_fmt = settings["date_format"]
+
+    def _line(tx, row=None, sheet_desc=None):
+        d = {"date": tx.date.strftime(date_fmt), "description": tx.description,
+             "amount": str(tx.amount)}
+        if row is not None:
+            d["sheet_row"] = row.sheet_row
+            d["sheet_desc"] = sheet_desc or row.description
+        return d
+
+    def skip(result, reason):
+        stats["skipped"] += 1
+        skipped_txs.append({**_line(result.bank_tx), "reason": reason})
     applied_sum = Decimal("0")   # running total of amounts actually written/inserted
     row_lookup = {r.row_index: r for r in sheet_rows}
     used_row_indices: set[int] = set()
@@ -526,8 +578,9 @@ def confirm():
                 used_row_indices.add(row.row_index)
                 applied_sum += row.amount
                 stats["auto"] += 1
+                auto_txs.append(_line(result.bank_tx, row, edit_desc))
             else:
-                stats["skipped"] += 1
+                skip(result, "Sheet row already used by another transaction")
 
         elif status in ("multi", "out_of_range"):
             choice = form.get(f"choice_{i}", "skip")
@@ -563,15 +616,15 @@ def confirm():
                             "receipt": receipt_on,
                         })
                     except RuntimeError:
-                        stats["skipped"] += 1
+                        skip(result, "No blank row available to insert")
                 else:
-                    stats["skipped"] += 1
+                    skip(result, "Skipped by you")
             else:
                 try:
                     chosen_row_index = int(choice)
                     if chosen_row_index in used_row_indices:
                         # Duplicate selection — treat as skipped
-                        stats["skipped"] += 1
+                        skip(result, "Sheet row already used by another transaction")
                     else:
                         chosen_row = row_lookup.get(chosen_row_index)
                         if chosen_row:
@@ -582,14 +635,40 @@ def confirm():
                             used_row_indices.add(chosen_row_index)
                             applied_sum += chosen_row.amount
                             stats["manual"] += 1
+                            manual_txs.append(_line(result.bank_tx, chosen_row, edit_desc))
                         else:
-                            stats["skipped"] += 1
+                            skip(result, "Chosen sheet row not found")
                 except (ValueError, TypeError):
-                    stats["skipped"] += 1
+                    skip(result, "Invalid selection")
 
         elif status == "missing":
             action = form.get(f"missing_{i}", "skip")
-            if action == "add":
+            try:
+                link_idx = int(form.get(f"link_{i}", ""))
+            except ValueError:
+                link_idx = None
+
+            if action == "add" and link_idx in extras_lookup and link_idx not in used_row_indices:
+                # Matched to an existing sheet row whose amount was wrong:
+                # reconcile it and correct its amount to the bank's.
+                tx = result.bank_tx
+                row = extras_lookup[link_idx]
+                comment = (f"Amount corrected from {row.amount:,.2f} to {tx.amount:,.2f} "
+                           f"on {recon_date}" if recon_date else
+                           f"Amount corrected from {row.amount:,.2f} to {tx.amount:,.2f}")
+                write_reconciled_date(doc, row, recon_date, settings)
+                update_row_amount(doc, row, tx.amount, comment, settings)
+                used_row_indices.add(link_idx)
+                applied_sum += tx.amount
+                stats["corrected"] += 1
+                corrected_txs.append({
+                    "sheet_row": row.sheet_row,
+                    "date": row.date.strftime(settings["date_format"]),
+                    "description": row.description,
+                    "old_amount": str(row.amount),
+                    "new_amount": str(tx.amount),
+                })
+            elif action == "add":
                 receipt_on = form.get(f"receipt_{i}") == "on"
                 tx = result.bank_tx
                 # Apply any user edits to the inserted transaction
@@ -616,13 +695,14 @@ def confirm():
                         "receipt": receipt_on,
                     })
                 except RuntimeError:
-                    stats["skipped"] += 1
+                    skip(result, "No blank row available to insert")
             else:
-                stats["skipped"] += 1
+                skip(result, "Skipped by you")
 
     save_mode = session.get("save_mode", "overwrite")
+    backup_name = None
     try:
-        save(doc, ods_path)
+        backup_name = save(doc, ods_path).name
         save_error = None
     except Exception as e:
         save_error = str(e)
@@ -653,6 +733,10 @@ def confirm():
         "complete.html",
         stats=stats,
         inserted_txs=inserted_txs,
+        corrected_txs=corrected_txs,
+        auto_txs=auto_txs,
+        manual_txs=manual_txs,
+        skipped_txs=skipped_txs,
         ending_bal=f"{ending_bal:,.2f}" if ending_bal else ending_bal_str,
         last_recon_bal=f"{last_recon_bal:,.2f}" if last_recon_bal is not None else None,
         computed_ending=f"{computed_ending:,.2f}" if computed_ending is not None else None,
@@ -661,6 +745,7 @@ def confirm():
         recon_date=recon_date,
         save_mode=save_mode,
         saved_to_path=ods_path_str if save_mode == "overwrite" and not save_error else None,
+        backup_name=backup_name if save_mode == "overwrite" and not save_error else None,
     )
 
 
@@ -790,10 +875,10 @@ def settings_page():
         s["date_format"]          = request.form.get("date_format", s["date_format"]).strip()
         s["checkmark_char"]       = request.form.get("checkmark_char", s["checkmark_char"]).strip()
         # Spreadsheet columns (entered as letters, stored as 0-based indices)
-        optional_cols = {"col_check", "col_receipt"}
+        optional_cols = {"col_check", "col_receipt", "col_comment"}
         for key in ("col_date", "col_check", "col_desc", "col_receipt",
                     "col_amount", "col_balance", "col_reconciled",
-                    "col_reconciled_bal", "col_not_reconciled"):
+                    "col_reconciled_bal", "col_not_reconciled", "col_comment"):
             letter = request.form.get(key, "").strip().upper()
             if letter and letter.isalpha() and len(letter) == 1:
                 s[key] = col_index(letter)
@@ -813,7 +898,7 @@ def settings_page():
         key: (col_letter(s[key]) if s[key] is not None else "")
         for key in ("col_date", "col_check", "col_desc", "col_receipt",
                     "col_amount", "col_balance", "col_reconciled",
-                    "col_reconciled_bal", "col_not_reconciled")
+                    "col_reconciled_bal", "col_not_reconciled", "col_comment")
     }
     return render_template("settings.html",
                            s=s,

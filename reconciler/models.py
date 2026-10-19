@@ -16,6 +16,7 @@ class SpreadsheetRow:
     reconciled_date: str    # empty string or date string
     reconciled_balance: Decimal | None
     not_reconciled: Decimal | None
+    sheet_row: int = 0      # 1-based row number as shown in the spreadsheet
 
 
 @dataclass

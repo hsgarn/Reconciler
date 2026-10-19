@@ -76,6 +76,28 @@ def _parse_date(cell) -> date | None:
     return None
 
 
+def current_reconciled_balance(rows: list) -> Decimal | None:
+    """Reconciled balance as of the last row, derived from the reconciled dates.
+
+    The sheet's "reconciled balance" column is a running formula, but the value
+    stored in the file is only as fresh as the last time a spreadsheet program
+    recalculated it. A file saved by this app has new reconciled dates and
+    stale stored balances, so rebuild the chain here instead of trusting it:
+    each reconciled row subtracts its amount, exactly as the sheet formula does.
+    Falls back to the stored value if the chain cannot be seeded.
+    """
+    stored = next((r.reconciled_balance for r in reversed(rows)
+                   if r.reconciled_balance is not None), None)
+    if not rows or rows[0].reconciled_balance is None:
+        return stored
+    first = rows[0]
+    balance = first.reconciled_balance + (first.amount if first.reconciled_date else Decimal("0"))
+    for r in rows:
+        if r.reconciled_date:
+            balance -= r.amount
+    return balance
+
+
 def list_sheet_names(ods_path: Path) -> list[str]:
     """Return all sheet names in the workbook."""
     doc = opendocument.load(str(ods_path))
@@ -118,7 +140,16 @@ def load_sheet(ods_path: Path, settings: dict | None = None):
 
     rows: list[SpreadsheetRow] = []
 
+    next_sheet_row = 1
     for row_index, tr in enumerate(target_table.getElementsByType(TableRow)):
+        # Rows can be collapsed with number-rows-repeated, so the spreadsheet
+        # row number is not simply row_index + 1.
+        sheet_row = next_sheet_row
+        try:
+            next_sheet_row += int(tr.attributes.get((TABLENS, "number-rows-repeated"), 1))
+        except (TypeError, ValueError):
+            next_sheet_row += 1
+
         cells = _expand_row(tr)
 
         if len(cells) <= s["col_amount"]:
@@ -149,6 +180,7 @@ def load_sheet(ods_path: Path, settings: dict | None = None):
             reconciled_date=safe_text(s["col_reconciled"]),
             reconciled_balance=safe_decimal(s["col_reconciled_bal"]),
             not_reconciled=safe_decimal(s["col_not_reconciled"]),
+            sheet_row=sheet_row,
         ))
 
     return doc, rows

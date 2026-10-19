@@ -16,6 +16,7 @@ DEFAULTS = {
     "col_reconciled":       7,
     "col_reconciled_bal":   8,
     "col_not_reconciled":   9,
+    "col_comment":          12,
     # Matching
     "date_window_days":     3,
     "oor_view_window_days": 60,
@@ -37,10 +38,10 @@ def load_settings() -> dict:
         merged = dict(DEFAULTS)
         merged.update(data)
         # Ensure integer column indices; col_check and col_receipt may be None (disabled)
-        optional_cols = {"col_check", "col_receipt"}
+        optional_cols = {"col_check", "col_receipt", "col_comment"}
         for key in ("col_date", "col_check", "col_desc", "col_receipt",
                     "col_amount", "col_balance", "col_reconciled",
-                    "col_reconciled_bal", "col_not_reconciled",
+                    "col_reconciled_bal", "col_not_reconciled", "col_comment",
                     "date_window_days", "oor_view_window_days"):
             val = merged.get(key)
             if val is None and key in optional_cols:

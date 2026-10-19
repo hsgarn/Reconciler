@@ -172,9 +172,92 @@ def update_row_fields(doc, row: SpreadsheetRow, date_str: str | None,
         _set_cell_text(cells[s["col_receipt"]], s["checkmark_char"] if receipt_on else "")
 
 
-def save(doc, ods_path: Path) -> None:
+_REPEAT = (TABLENS, "number-columns-repeated")
+
+
+def _insert_after(tr, ref, new) -> None:
+    nxt = ref.nextSibling
+    if nxt is not None:
+        tr.insertBefore(new, nxt)
+    else:
+        tr.addElement(new)
+
+
+def _isolate_cell(tr, idx: int):
+    """Return the cell at column idx, splitting a number-columns-repeated run
+    so that editing it does not change its neighbours. Pads short rows."""
+    col = 0
+    last = None
+    for cell in list(tr.childNodes):
+        if cell.nodeType != cell.ELEMENT_NODE:
+            continue
+        try:
+            repeat = int(cell.attributes.get(_REPEAT, 1))
+        except (TypeError, ValueError):
+            repeat = 1
+        last = cell
+        if col <= idx < col + repeat:
+            if repeat == 1:
+                return cell
+            before = idx - col
+            after = repeat - before - 1
+            if before > 0:
+                cell.attributes[_REPEAT] = str(before)
+                target = TableCell()
+                target.attributes = {k: v for k, v in cell.attributes.items() if k != _REPEAT}
+                _insert_after(tr, cell, target)
+            else:
+                target = cell
+                target.attributes.pop(_REPEAT, None)
+            if after > 0:
+                tail = TableCell()
+                tail.attributes = {k: v for k, v in target.attributes.items()}
+                tail.attributes[_REPEAT] = str(after)
+                _insert_after(tr, target, tail)
+            return target
+        col += repeat
+
+    # Row ends before idx: pad with empty cells
+    while col <= idx:
+        new_cell = TableCell()
+        tr.addElement(new_cell)
+        last = new_cell
+        col += 1
+    return last
+
+
+def update_row_amount(doc, row: SpreadsheetRow, new_amount: Decimal, comment: str,
+                      settings: dict | None = None) -> None:
+    """Replace a row's amount and append `comment` to its comment column."""
+    if settings is None:
+        settings = load_settings()
+    s = settings
+    table = _get_table(doc, s)
+    tr = table.getElementsByType(TableRow)[row.row_index]
+
+    amt_cell = _expand_row(tr)[s["col_amount"]]
+    amt_cell.attributes.pop((TABLENS, "formula"), None)
+    vt = amt_cell.attributes.get((OFFICENS, "value-type"))
+    if vt not in ("float", "currency", "percentage"):
+        vt = "float"
+    amt_cell.attributes[(OFFICENS, "value-type")] = vt
+    amt_cell.attributes[(OFFICENS, "value")] = str(new_amount)
+    for p in list(amt_cell.getElementsByType(odftext.P)):
+        amt_cell.removeChild(p)
+    amt_cell.addElement(odftext.P(text=f"{new_amount:,.2f}"))
+
+    col = s.get("col_comment")
+    if col is not None and comment:
+        cell = _isolate_cell(tr, col)
+        existing = _cell_text_content(cell)
+        _set_cell_text(cell, f"{existing} | {comment}" if existing else comment)
+
+
+def save(doc, ods_path: Path) -> Path:
+    """Back up the existing file, save over it, and return the backup path."""
     import shutil
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = ods_path.with_name(f"{ods_path.stem}_backup_{ts}{ods_path.suffix}")
     shutil.copy2(str(ods_path), str(backup_path))
     doc.save(str(ods_path))
+    return backup_path

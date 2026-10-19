@@ -3,6 +3,35 @@
 
 {% block content %}
 
+{% macro matched_table(items) %}
+<div class="table-responsive">
+  <table class="table table-sm table-hover mb-0">
+    <thead class="table-light">
+      <tr>
+        <th>Row</th>
+        <th>Bank Date</th>
+        <th>Bank Description</th>
+        <th>Sheet Description</th>
+        <th class="text-end">Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for tx in items %}
+      <tr>
+        <td>{{ tx.sheet_row }}</td>
+        <td class="text-nowrap">{{ tx.date }}</td>
+        <td>{{ tx.description }}</td>
+        <td>{{ tx.sheet_desc }}</td>
+        <td class="text-end text-nowrap {% if tx.amount | float < 0 %}text-danger{% else %}text-success{% endif %}">
+          ${{ '%.2f' | format(tx.amount | float | abs) }}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endmacro %}
+
 <div class="text-center mb-4">
   <div class="display-1 mb-2">
     {% if balance_match %}
@@ -100,6 +129,31 @@
   </div>
 </div>
 
+{# ── Auto-Matched Transactions ── #}
+{% if auto_txs %}
+<div class="section-header">
+  <i class="bi bi-check-circle text-success me-1"></i> Auto-Matched Transactions
+  <span class="text-muted fw-normal fs-6 ms-2">({{ auto_txs | length }})</span>
+</div>
+<div class="card shadow-sm mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center cursor-pointer"
+       data-bs-toggle="collapse" data-bs-target="#auto-done-collapse" aria-expanded="false">
+    <span class="fw-semibold text-success"><i class="bi bi-check2-circle me-1"></i> {{ auto_txs | length }} transactions — click to show</span>
+    <i class="bi bi-chevron-down"></i>
+  </div>
+  <div class="collapse" id="auto-done-collapse">{{ matched_table(auto_txs) }}</div>
+</div>
+{% endif %}
+
+{# ── Manually Matched Transactions ── #}
+{% if manual_txs %}
+<div class="section-header">
+  <i class="bi bi-hand-index text-primary me-1"></i> Manually Matched Transactions
+  <span class="text-muted fw-normal fs-6 ms-2">({{ manual_txs | length }})</span>
+</div>
+<div class="card shadow-sm mb-4">{{ matched_table(manual_txs) }}</div>
+{% endif %}
+
 {# ── Inserted Transactions ── #}
 {% if inserted_txs %}
 <div class="section-header"><i class="bi bi-plus-circle text-warning me-1"></i> Inserted Transactions</div>
@@ -139,11 +193,85 @@
 </div>
 {% endif %}
 
+{# ── Skipped Transactions ── #}
+{% if skipped_txs %}
+<div class="section-header">
+  <i class="bi bi-skip-forward text-secondary me-1"></i> Skipped Transactions
+  <span class="text-muted fw-normal fs-6 ms-2">({{ skipped_txs | length }})</span>
+</div>
+<div class="card shadow-sm mb-4">
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Bank Date</th>
+          <th>Bank Description</th>
+          <th class="text-end">Amount</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for tx in skipped_txs %}
+        <tr>
+          <td class="text-nowrap">{{ tx.date }}</td>
+          <td>{{ tx.description }}</td>
+          <td class="text-end text-nowrap {% if tx.amount | float < 0 %}text-danger{% else %}text-success{% endif %}">
+            ${{ '%.2f' | format(tx.amount | float | abs) }}
+          </td>
+          <td class="text-muted small">{{ tx.reason }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{# ── Corrected Transactions ── #}
+{% if corrected_txs %}
+<div class="section-header"><i class="bi bi-pencil-square text-primary me-1"></i> Corrected Transactions</div>
+<div class="card shadow-sm mb-4">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Row</th>
+            <th>Date</th>
+            <th>Description</th>
+            <th class="text-end">Old Amount</th>
+            <th class="text-end">New Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for tx in corrected_txs %}
+          <tr>
+            <td>{{ tx.sheet_row }}</td>
+            <td>{{ tx.date }}</td>
+            <td>{{ tx.description }}</td>
+            <td class="text-end text-muted">{{ '%.2f' | format(tx.old_amount | float) }}</td>
+            <td class="text-end fw-semibold">{{ '%.2f' | format(tx.new_amount | float) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<div class="text-muted small mb-4">
+  <i class="bi bi-info-circle me-1"></i>
+  Balance formulas may need a recalculation in your spreadsheet (Ctrl+Shift+F9 in LibreOffice) to reflect corrected amounts.
+</div>
+{% endif %}
+
 {# ── Save location ── #}
 {% if saved_to_path %}
 <div class="alert alert-success">
   <i class="bi bi-check-circle-fill me-2"></i>
   Spreadsheet saved to <strong>{{ saved_to_path }}</strong>
+  {% if backup_name %}
+  <div class="mt-1 small"><i class="bi bi-archive me-2"></i>Backup saved as <strong>{{ backup_name }}</strong></div>
+  {% endif %}
 </div>
 {% endif %}
 
