@@ -348,7 +348,7 @@ def process():
         "computed_bal": fmt_bal(computed_bal),
         "ending_bal": fmt_bal(ending_bal),
         "match": (ending_bal is not None and computed_bal is not None
-                  and ending_bal == computed_bal),
+                  and ending_bal.quantize(Decimal("0.01")) == computed_bal.quantize(Decimal("0.01"))),
     }
 
     # Build oor_all_matches now so it can be cached
@@ -639,7 +639,7 @@ def confirm():
     balance_match = (
         ending_bal is not None
         and computed_ending is not None
-        and ending_bal == computed_ending
+        and ending_bal.quantize(Decimal("0.01")) == computed_ending.quantize(Decimal("0.01"))
     )
 
     if temp_json_key and os.path.exists(temp_json_key):
